@@ -1,0 +1,8 @@
+node_modules
+build
+.colyseus-cloud.json
+.devmode.json
+# Playwright
+.cache/
+playwright/
+.playwright/
