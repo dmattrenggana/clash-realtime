@@ -2,6 +2,12 @@ node_modules
 build
 .colyseus-cloud.json
 .devmode.json
+# Env files — never commit, never overwrite via git reset
+.env
+.env.development
+.env.production
+.env.local
+.env.*.local
 # Playwright
 .cache/
 playwright/
