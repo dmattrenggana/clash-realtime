@@ -11,13 +11,18 @@ import {
  * Import your Room files
  */
 import { BattleRoom } from "./rooms/BattleRoom.js";
+import { BattleQueueRoom } from "./rooms/BattleQueueRoom.js";
 
 const server = defineServer({
     /**
      * Define your room handlers:
+     *
+     * - battle_queue: pre-game matchmaking (pairs players into a fresh battle)
+     * - battle:       the actual game room (server-authoritative 1v1)
      */
     rooms: {
-        battle: defineRoom(BattleRoom)
+        battle_queue: defineRoom(BattleQueueRoom),
+        battle: defineRoom(BattleRoom),
     },
 
     /**
