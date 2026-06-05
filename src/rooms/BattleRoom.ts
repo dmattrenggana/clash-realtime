@@ -18,15 +18,9 @@ const TICK_RATE_MS = 100; // 10 Hz server tick
 const RECONNECTION_GRACE_SEC = 30;
 const FIELD_BOUND = 100; // |x|, |z| <= 100
 
-// Hard-fail Privy config in production — but only if ANON mode is OFF
-const IS_PROD = process.env.NODE_ENV === "production";
-const ALLOW_ANON_IN_DEV = process.env.ALLOW_ANON_USERS === "true";
-if (IS_PROD && !ALLOW_ANON_IN_DEV && !process.env.PRIVY_APP_ID) {
-  throw new Error("FATAL: PRIVY_APP_ID missing in production (set ALLOW_ANON_USERS=true to bypass)");
-}
-if (IS_PROD && !ALLOW_ANON_IN_DEV && !process.env.PRIVY_APP_SECRET) {
-  throw new Error("FATAL: PRIVY_APP_SECRET missing in production (set ALLOW_ANON_USERS=true to bypass)");
-}
+// NOTE: We CANNOT read process.env here at module load time — @colyseus/tools
+// loads .env.production via dotenv AFTER our module is imported. Reading here
+// would always see empty env. Instead, read env lazily in onAuth() / onCreate().
 
 const PRIVY_APP_ID = process.env.PRIVY_APP_ID ?? "";
 const PRIVY_APP_SECRET = process.env.PRIVY_APP_SECRET ?? "";
@@ -71,10 +65,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private tickInterval: Delayed | null = null;
 
   static async onAuth(token: string, options: any, context: any) {
+    // Read env here (not at module load) — dotenv loads .env.production
+    // AFTER this module is imported, so module-level reads would be empty.
+    const allowAnon = process.env.ALLOW_ANON_USERS === "true";
+
     // Dev/anon mode: bypass ALL auth. Any token (or none) is accepted as anonymous.
-    // This is for local testing / staging where real Privy creds aren't configured.
-    // In production, set ALLOW_ANON_USERS=false and provide real PRIVY_APP_ID + SECRET.
-    if (ALLOW_ANON_IN_DEV) {
+    if (allowAnon) {
       return { userId: options.wallet || "anonymous", wallet: options.wallet || "anonymous" };
     }
     // Production: require non-empty token
@@ -83,11 +79,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     }
     try {
       // verifyAuthToken handles JWKS fetch, signature check, and expiration.
-      // Returns a Claims object: { userId, appId, issuer, issuedAt, expiration }.
       const claims = await getPrivy().verifyAuthToken(token);
-      // `options.wallet` is the wallet the client claims to own. We trust the
-      // Privy userId (proof of login) but cross-check that the wallet address
-      // actually belongs to this user via getUser() if needed.
       return { userId: claims.userId, wallet: options.wallet || "" };
     } catch (err) {
       throw new Error("Invalid auth token");
@@ -95,6 +87,17 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   }
 
   onCreate(options: any) {
+    // Validate env NOW (after dotenv has loaded .env.production)
+    const isProd = process.env.NODE_ENV === "production";
+    const allowAnon = process.env.ALLOW_ANON_USERS === "true";
+    if (isProd && !allowAnon && !process.env.PRIVY_APP_ID) {
+      throw new Error("FATAL: PRIVY_APP_ID missing in production (set ALLOW_ANON_USERS=true to bypass)");
+    }
+    if (isProd && !allowAnon && !process.env.PRIVY_APP_SECRET) {
+      throw new Error("FATAL: PRIVY_APP_SECRET missing in production (set ALLOW_ANON_USERS=true to bypass)");
+    }
+    console.log(`[BattleRoom] Auth mode: ${allowAnon ? "ANON (no Privy verify)" : "PRIVY (JWT verify)"}`);
+
     this.state = new BattleState();
     this.state.seed = options.seed || this.randomSeed();
     console.log(`[BattleRoom] Created with seed: ${this.state.seed}`);
