@@ -13,7 +13,7 @@
     "loadtest": "tsx loadtest/example.ts --room my_room --numClients 2",
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "clean": "rimraf build",
-    "test": "mocha -r tsx test/**.test.ts --exit --timeout 15000"
+    "test": "tsc -p tsconfig.json --outDir build && mocha build/test/**.test.js --exit --timeout 15000"
   },
   "author": "",
   "license": "UNLICENSED",
@@ -35,7 +35,9 @@
   "dependencies": {
     "@colyseus/tools": "^0.17.0",
     "@colyseus/schema": "^4.0.0",
+    "@privy-io/server-auth": "^1.32.0",
     "colyseus": "^0.17.6",
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "zod": "^4.1.12"
   }
 }

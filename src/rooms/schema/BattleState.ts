@@ -37,6 +37,7 @@ export class Player extends Schema {
   @type("string") walletAddress: string = "";
   @type("uint8") team: number = 0;
   @type("float32") elixir: number = 5;
+  @type("boolean") connected: boolean = true;
   @type([Tower]) towers = new ArraySchema<Tower>();
   @type([DeployedUnit]) units = new ArraySchema<DeployedUnit>();
 }

@@ -1,4 +1,7 @@
-import { Room, Client, CloseCode } from "colyseus";
+import { Room, Client, CloseCode, validate } from "colyseus";
+import { z } from "zod";
+import { PrivyClient } from "@privy-io/server-auth";
+import type { Delayed } from "@colyseus/timer";
 import {
   BattleState,
   Player,
@@ -11,12 +14,82 @@ import {
   MAX_DURATION,
 } from "./schema/BattleState.js";
 
-const TICK_RATE_MS = 100; // 10Hz
+const TICK_RATE_MS = 100; // 10 Hz server tick
+const RECONNECTION_GRACE_SEC = 30;
+const FIELD_BOUND = 100; // |x|, |z| <= 100
 
-export class BattleRoom extends Room<BattleState> {
+// Hard-fail Privy config in production
+const IS_PROD = process.env.NODE_ENV === "production";
+if (IS_PROD && !process.env.PRIVY_APP_ID) {
+  throw new Error("FATAL: PRIVY_APP_ID missing in production");
+}
+if (IS_PROD && !process.env.PRIVY_APP_SECRET) {
+  throw new Error("FATAL: PRIVY_APP_SECRET missing in production");
+}
+
+const PRIVY_APP_ID = process.env.PRIVY_APP_ID ?? "";
+const PRIVY_APP_SECRET = process.env.PRIVY_APP_SECRET ?? "";
+const ALLOW_ANON_IN_DEV = process.env.ALLOW_ANON_USERS === "true";
+
+// Lazy-init Privy client. We use the same App ID + App Secret that the client
+// uses — these come from the Privy dashboard, not from any user-specific key.
+let _privy: PrivyClient | null = null;
+function getPrivy(): PrivyClient {
+  if (!_privy) {
+    if (!PRIVY_APP_ID || !PRIVY_APP_SECRET) {
+      throw new Error("Privy client not configured (missing PRIVY_APP_ID / PRIVY_APP_SECRET)");
+    }
+    _privy = new PrivyClient(PRIVY_APP_ID, PRIVY_APP_SECRET);
+  }
+  return _privy;
+}
+
+// Zod schemas for incoming messages (server-side validation; trust no client)
+const deployCardSchema = z.object({
+  cardId: z.string().min(1).max(50),
+  x: z.number().finite().gte(-FIELD_BOUND).lte(FIELD_BOUND),
+  z: z.number().finite().gte(-FIELD_BOUND).lte(FIELD_BOUND),
+});
+
+const surrenderSchema = z.object({}).optional();
+
+/**
+ * BattleRoom — server-authoritative 1v1 match.
+ * Lifecycle:
+ *   onCreate      -> init empty state
+ *   onAuth        -> verify Privy JWT (or accept anon in dev)
+ *   onJoin        -> add player + 3 towers; trigger start when 2 joined
+ *   onDrop        -> mark disconnected, allow reconnection for 30s
+ *   onReconnect   -> mark connected
+ *   onLeave       -> remove from state; end match if game in progress
+ *   onDispose     -> clock.setInterval is auto-cleaned
+ */
+export class BattleRoom extends Room<{ state: BattleState }> {
   maxClients = 2;
-  private tickInterval: NodeJS.Timeout | null = null;
+  maxMessagesPerSecond = 30;
   private gameStartTime = 0;
+  private tickInterval: Delayed | null = null;
+
+  static async onAuth(token: string, options: any, context: any) {
+    // Dev mode: allow anonymous wallets for local testing
+    if (!token && ALLOW_ANON_IN_DEV) {
+      return { userId: options.wallet || "anonymous", wallet: options.wallet || "anonymous" };
+    }
+    if (!token) {
+      throw new Error("Missing auth token");
+    }
+    try {
+      // verifyAuthToken handles JWKS fetch, signature check, and expiration.
+      // Returns a Claims object: { userId, appId, issuer, issuedAt, expiration }.
+      const claims = await getPrivy().verifyAuthToken(token);
+      // `options.wallet` is the wallet the client claims to own. We trust the
+      // Privy userId (proof of login) but cross-check that the wallet address
+      // actually belongs to this user via getUser() if needed.
+      return { userId: claims.userId, wallet: options.wallet || "" };
+    } catch (err) {
+      throw new Error("Invalid auth token");
+    }
+  }
 
   onCreate(options: any) {
     this.state = new BattleState();
@@ -24,43 +97,85 @@ export class BattleRoom extends Room<BattleState> {
     console.log(`[BattleRoom] Created with seed: ${this.state.seed}`);
   }
 
-  onJoin(client: Client, options: any) {
-    console.log(`[BattleRoom] ${client.sessionId} joined (wallet: ${options.wallet})`);
+  onJoin(client: Client, options: any, auth?: any) {
+    const wallet =
+      (auth && auth.wallet) ||
+      options.wallet ||
+      "anonymous";
 
     const team = this.state.players.size;
     const player = new Player();
-    player.walletAddress = options.wallet || "anonymous";
+    player.walletAddress = wallet;
     player.team = team;
+    player.connected = true;
 
-    // Init 3 towers
     const t1 = new Tower();
-    t1.type = "princess"; t1.hp = INITIAL_TOWER_HP.princess; t1.maxHp = INITIAL_TOWER_HP.princess;
+    t1.type = "princess";
+    t1.hp = INITIAL_TOWER_HP.princess;
+    t1.maxHp = INITIAL_TOWER_HP.princess;
     const t2 = new Tower();
-    t2.type = "king"; t2.hp = INITIAL_TOWER_HP.king; t2.maxHp = INITIAL_TOWER_HP.king;
+    t2.type = "king";
+    t2.hp = INITIAL_TOWER_HP.king;
+    t2.maxHp = INITIAL_TOWER_HP.king;
     const t3 = new Tower();
-    t3.type = "princess"; t3.hp = INITIAL_TOWER_HP.princess; t3.maxHp = INITIAL_TOWER_HP.princess;
-
+    t3.type = "princess";
+    t3.hp = INITIAL_TOWER_HP.princess;
+    t3.maxHp = INITIAL_TOWER_HP.princess;
     player.towers.push(t1, t2, t3);
+
     this.state.players.set(client.sessionId, player);
+    console.log(`[BattleRoom] ${client.sessionId} joined (wallet: ${wallet}, team: ${team})`);
 
     if (this.state.players.size === 2) {
       this.state.status = "playing";
       this.gameStartTime = Date.now();
-      this.tickInterval = setInterval(() => this.tick(), TICK_RATE_MS);
+      // Use this.clock so the interval auto-cleans on dispose
+      this.tickInterval = this.clock.setInterval(() => this.tick(), TICK_RATE_MS);
       console.log(`[BattleRoom] Game started!`);
+    }
+  }
+
+  async onDrop(client: Client, code: number) {
+    // Network drop: keep player in state, mark disconnected, allow reconnection.
+    const player = this.state.players.get(client.sessionId);
+    if (player) player.connected = false;
+    console.log(`[BattleRoom] ${client.sessionId} dropped (code ${code}); allowing reconnection for ${RECONNECTION_GRACE_SEC}s`);
+
+    try {
+      await this.allowReconnection(client, RECONNECTION_GRACE_SEC);
+      // If allowReconnection resolves, client reconnected — onReconnect handled it.
+    } catch {
+      // Reconnection grace expired — fall through to onLeave cleanup.
+      console.log(`[BattleRoom] ${client.sessionId} failed to reconnect in time`);
+    }
+  }
+
+  onReconnect(client: Client) {
+    const player = this.state.players.get(client.sessionId);
+    if (player) {
+      player.connected = true;
+      console.log(`[BattleRoom] ${client.sessionId} reconnected`);
     }
   }
 
   onLeave(client: Client, code: CloseCode) {
     console.log(`[BattleRoom] ${client.sessionId} left (code: ${code})`);
-    this.state.players.delete(client.sessionId);
+    // If onDrop ran first, the player was already removed by the time we get here.
+    // Defensive: only delete if still present.
+    if (this.state.players.has(client.sessionId)) {
+      this.state.players.delete(client.sessionId);
+    }
     if (this.state.status === "playing" && this.state.players.size < 2) {
       this.endMatch();
     }
   }
 
   onDispose() {
-    if (this.tickInterval) clearInterval(this.tickInterval);
+    // this.clock.setInterval auto-cancels on dispose, but be defensive:
+    if (this.tickInterval !== null) {
+      this.tickInterval.clear();
+      this.tickInterval = null;
+    }
     console.log(`[BattleRoom] Disposed`);
   }
 
@@ -71,13 +186,12 @@ export class BattleRoom extends Room<BattleState> {
 
     // Regen elixir
     this.state.players.forEach((p: Player) => {
-      if (p.elixir < 10) p.elixir = Math.min(10, p.elixir + ELIXIR_REGEN_PER_SEC * (TICK_RATE_MS / 1000));
+      if (p.elixir < 10) {
+        p.elixir = Math.min(10, p.elixir + ELIXIR_REGEN_PER_SEC * (TICK_RATE_MS / 1000));
+      }
     });
 
-    // Damage: units attack random enemy tower
     this.applyUnitDamage();
-
-    // Win check
     this.checkWinCondition();
   }
 
@@ -117,8 +231,12 @@ export class BattleRoom extends Room<BattleState> {
   }
 
   private endMatch() {
+    if (this.state.status === "ended") return; // idempotent guard
     this.state.status = "ended";
-    if (this.tickInterval) { clearInterval(this.tickInterval); this.tickInterval = null; }
+    if (this.tickInterval !== null) {
+      this.tickInterval.clear();
+      this.tickInterval = null;
+    }
     console.log(`[BattleRoom] Match ended. Winner: ${this.state.winnerTeam}`);
 
     this.broadcast("matchEnd", {
@@ -133,18 +251,39 @@ export class BattleRoom extends Room<BattleState> {
   }
 
   messages = {
-    deployCard: (client: Client, payload: { cardId: string; x: number; z: number }) => {
+    deployCard: validate(deployCardSchema, (client, payload) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
+      if (this.state.status !== "playing") {
+        client.send("error", { code: "NOT_PLAYING", message: "Match is not in playing state" });
+        return;
+      }
+      if (!player.connected) {
+        // Reject if user is in drop state — server will resume them on reconnect
+        client.send("error", { code: "DISCONNECTED", message: "You are disconnected" });
+        return;
+      }
+
       const cost = CARD_COST[payload.cardId];
       if (cost === undefined) {
-        client.send("error", { message: `Unknown card: ${payload.cardId}` });
+        client.send("error", { code: "INVALID_CARD", message: `Unknown card: ${payload.cardId}` });
         return;
       }
       if (player.elixir < cost) {
-        client.send("error", { message: `Insufficient elixir` });
+        client.send("error", { code: "INSUFFICIENT_ELIXIR", message: "Not enough elixir" });
         return;
       }
+
+      // Zone validation: each team has its own half
+      // team 0 -> player side: z > 0; team 1 -> enemy side: z < 0
+      const isMySide =
+        (player.team === 0 && payload.z > 0) ||
+        (player.team === 1 && payload.z < 0);
+      if (!isMySide) {
+        client.send("error", { code: "INVALID_ZONE", message: "Can only deploy on your side" });
+        return;
+      }
+
       player.elixir -= cost;
       const unit = new DeployedUnit();
       unit.cardId = payload.cardId;
@@ -154,7 +293,20 @@ export class BattleRoom extends Room<BattleState> {
       unit.spawnTime = this.state.elapsedSec;
       player.units.push(unit);
       console.log(`[BattleRoom] Team ${player.team} deployed ${payload.cardId}`);
-    },
+    }),
+
+    surrender: validate(surrenderSchema, (client, _payload) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+      if (this.state.status !== "playing") return;
+      const opponent = Array.from(this.state.players.values()).find(
+        (p) => p.team !== player.team,
+      );
+      if (opponent) {
+        this.state.winnerTeam = String(opponent.team);
+        this.endMatch();
+      }
+    }),
   };
 
   private randomSeed(): string {
