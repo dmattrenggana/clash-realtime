@@ -18,18 +18,18 @@ const TICK_RATE_MS = 100; // 10 Hz server tick
 const RECONNECTION_GRACE_SEC = 30;
 const FIELD_BOUND = 100; // |x|, |z| <= 100
 
-// Hard-fail Privy config in production
+// Hard-fail Privy config in production — but only if ANON mode is OFF
 const IS_PROD = process.env.NODE_ENV === "production";
-if (IS_PROD && !process.env.PRIVY_APP_ID) {
-  throw new Error("FATAL: PRIVY_APP_ID missing in production");
+const ALLOW_ANON_IN_DEV = process.env.ALLOW_ANON_USERS === "true";
+if (IS_PROD && !ALLOW_ANON_IN_DEV && !process.env.PRIVY_APP_ID) {
+  throw new Error("FATAL: PRIVY_APP_ID missing in production (set ALLOW_ANON_USERS=true to bypass)");
 }
-if (IS_PROD && !process.env.PRIVY_APP_SECRET) {
-  throw new Error("FATAL: PRIVY_APP_SECRET missing in production");
+if (IS_PROD && !ALLOW_ANON_IN_DEV && !process.env.PRIVY_APP_SECRET) {
+  throw new Error("FATAL: PRIVY_APP_SECRET missing in production (set ALLOW_ANON_USERS=true to bypass)");
 }
 
 const PRIVY_APP_ID = process.env.PRIVY_APP_ID ?? "";
 const PRIVY_APP_SECRET = process.env.PRIVY_APP_SECRET ?? "";
-const ALLOW_ANON_IN_DEV = process.env.ALLOW_ANON_USERS === "true";
 
 // Lazy-init Privy client. We use the same App ID + App Secret that the client
 // uses — these come from the Privy dashboard, not from any user-specific key.
@@ -71,10 +71,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private tickInterval: Delayed | null = null;
 
   static async onAuth(token: string, options: any, context: any) {
-    // Dev mode: allow anonymous wallets for local testing
-    if (!token && ALLOW_ANON_IN_DEV) {
+    // Dev/anon mode: bypass ALL auth. Any token (or none) is accepted as anonymous.
+    // This is for local testing / staging where real Privy creds aren't configured.
+    // In production, set ALLOW_ANON_USERS=false and provide real PRIVY_APP_ID + SECRET.
+    if (ALLOW_ANON_IN_DEV) {
       return { userId: options.wallet || "anonymous", wallet: options.wallet || "anonymous" };
     }
+    // Production: require non-empty token
     if (!token) {
       throw new Error("Missing auth token");
     }
