@@ -11,6 +11,12 @@ export const CARD_DPS: Record<string, number> = {
   barrel_bomb: 55, meteor: 70, incubus: 15,
 };
 
+export const CARD_HP: Record<string, number> = {
+  knight: 600, archer: 250, giant: 2000, wyvern: 500, wizard: 350,
+  goblin: 150, barbarian: 500, healer: 400, gunslinger: 350,
+  barrel_bomb: 200, meteor: 1, incubus: 400,
+};
+
 export const CARD_COST: Record<string, number> = {
   knight: 3, archer: 2, giant: 5, wyvern: 4, wizard: 4,
   goblin: 2, barbarian: 3, healer: 4, gunslinger: 4,
@@ -31,6 +37,8 @@ export class DeployedUnit extends Schema {
   @type("float32") x: number = 0;
   @type("float32") z: number = 0;
   @type("float32") spawnTime: number = 0;
+  @type("uint16") hp: number = 100;
+  @type("uint16") maxHp: number = 100;
 }
 
 export class Player extends Schema {

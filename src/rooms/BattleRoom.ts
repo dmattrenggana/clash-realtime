@@ -8,6 +8,7 @@ import {
   Player,
   Tower,
   DeployedUnit,
+  CARD_HP,
   CARD_COST,
   CARD_DPS,
   INITIAL_TOWER_HP,
@@ -251,22 +252,106 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       }
     });
 
+    this.moveUnits();
     this.applyUnitDamage();
     this.checkWinCondition();
   }
 
-  private applyUnitDamage() {
-    const players: Player[] = Array.from(this.state.players.values());
-    players.forEach((attacker) => {
-      const enemy = players.find((p) => p.team !== attacker.team);
+  private moveUnits() {
+    const playerList = Array.from(this.state.players.values());
+    playerList.forEach((player) => {
+      const enemy = playerList.find((p) => p.team !== player.team);
       if (!enemy) return;
-      attacker.units.forEach((unit: DeployedUnit) => {
-        const living = enemy.towers.filter((t: Tower) => t.hp > 0);
-        if (living.length === 0) return;
-        const target = living[Math.floor(Math.random() * living.length)];
-        const dps = CARD_DPS[unit.cardId] || 0;
-        const damage = Math.floor(dps * 5 * (TICK_RATE_MS / 1000));
-        target.hp = Math.max(0, target.hp - damage);
+
+      // Cleanup dead units before moving
+      for (let i = player.units.length - 1; i >= 0; i--) {
+        if (player.units[i].hp <= 0) {
+          player.units.splice(i, 1);
+        }
+      }
+
+      player.units.forEach((unit) => {
+        let targetX = 0;
+        let targetZ = 0;
+        let minDist = Infinity;
+
+        // 1. Scan Unit Lawan
+        enemy.units.forEach((eUnit) => {
+          const d = Math.sqrt(Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2));
+          if (d < minDist) {
+            minDist = d;
+            targetX = eUnit.x;
+            targetZ = eUnit.z;
+          }
+        });
+
+        // 2. Scan Tower Lawan
+        enemy.towers.forEach((t) => {
+          if (t.hp <= 0) return;
+          // Koordinat tower statis
+          const tx = t.type === "king" ? 0 : (unit.x > 0 ? 6 : -6);
+          const tz = enemy.team === 0 ? 14.5 : -14.5;
+          const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
+          if (d < minDist) {
+            minDist = d;
+            targetX = tx;
+            targetZ = tz;
+          }
+        });
+
+        if (minDist === Infinity) return;
+
+        // Insting: Berhenti jika sudah dalam jangkauan serang
+        const attackRange = 2.2;
+
+        if (minDist > attackRange) {
+          const dx = targetX - unit.x;
+          const dz = targetZ - unit.z;
+          const speed = 2.5;
+          const moveStep = (speed * TICK_RATE_MS) / 1000;
+          unit.x += (dx / minDist) * moveStep;
+          unit.z += (dz / minDist) * moveStep;
+        }
+      });
+    });
+  }
+
+  private applyUnitDamage() {
+    const playerList = Array.from(this.state.players.values());
+    playerList.forEach((attacker) => {
+      const enemy = playerList.find((p) => p.team !== attacker.team);
+      if (!enemy) return;
+
+      attacker.units.forEach((unit) => {
+        let closestTarget: { hp: number } | null = null;
+        let minDist = Infinity;
+
+        // Cari target terdekat lagi untuk damage
+        enemy.units.forEach((eUnit) => {
+          const d = Math.sqrt(Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2));
+          if (d < minDist) {
+            minDist = d;
+            closestTarget = eUnit;
+          }
+        });
+
+        enemy.towers.forEach((t) => {
+          if (t.hp <= 0) return;
+          const tx = t.type === "king" ? 0 : (unit.x > 0 ? 6 : -6);
+          const tz = enemy.team === 0 ? 14.5 : -14.5;
+          const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
+          if (d < minDist) {
+            minDist = d;
+            closestTarget = t;
+          }
+        });
+
+        // Insting: Hanya beri damage jika target masih hidup dan dalam jangkauan
+        if (closestTarget && (closestTarget as any).hp > 0 && minDist <= 2.5) {
+          const dps = CARD_DPS[unit.cardId] || 0;
+          const damage = Math.floor(dps * (TICK_RATE_MS / 1000));
+          closestTarget.hp = Math.max(0, closestTarget.hp - damage);
+        }
       });
     });
   }
@@ -350,6 +435,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       unit.team = player.team;
       unit.x = payload.x;
       unit.z = payload.z;
+      unit.hp = CARD_HP[payload.cardId] || 100;
+      unit.maxHp = unit.hp;
       unit.spawnTime = this.state.elapsedSec;
       player.units.push(unit);
       console.log(`[BattleRoom] Team ${player.team} deployed ${payload.cardId}`);
