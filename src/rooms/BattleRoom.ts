@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { Room, Client, CloseCode, validate } from "colyseus";
 import { z } from "zod";
 import { PrivyClient } from "@privy-io/server-auth";
@@ -316,6 +317,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   };
 
   private randomSeed(): string {
-    return Math.random().toString(36).substring(2, 18);
+    // CSPRNG: game-critical randomness must not use Math.random
+    // (per COLYSEUS-GUIDE §20.2). 8 bytes = 16 hex chars, plenty of entropy
+    // for a server-anti-cheat seed that drives deterministic gameplay.
+    return randomBytes(8).toString("hex");
   }
 }
