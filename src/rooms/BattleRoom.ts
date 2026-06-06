@@ -18,6 +18,11 @@ import {
 const TICK_RATE_MS = 100; // 10 Hz server tick
 const RECONNECTION_GRACE_SEC = 30;
 const FIELD_BOUND = 100; // |x|, |z| <= 100
+// If a BattleRoom is created (via matchMaker) but the second player never
+// joins within this window, dispose the room to prevent resource leaks.
+// Covers the case where one client consumed the seat reservation but the
+// other didn't (e.g. timed out or crashed mid-handoff).
+const EMPTY_ROOM_TIMEOUT_MS = 30_000;
 
 // NOTE: We CANNOT read process.env here at module load time — @colyseus/tools
 // loads .env.production via dotenv AFTER our module is imported. Reading here
@@ -64,6 +69,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   maxMessagesPerSecond = 30;
   private gameStartTime = 0;
   private tickInterval: Delayed | null = null;
+  // Empty-room watchdog: fires EMPTY_ROOM_TIMEOUT_MS after onCreate to
+  // dispose the room if the second player never arrives.
+  private emptyTimeout: Delayed | null = null;
 
   static async onAuth(token: string, options: any, context: any) {
     // Read env here (not at module load) — dotenv loads .env.production
@@ -102,6 +110,15 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.state = new BattleState();
     this.state.seed = options.seed || this.randomSeed();
     console.log(`[BattleRoom] Created with seed: ${this.state.seed}`);
+
+    // Empty-room watchdog: if no second player joins within the timeout,
+    // dispose to prevent leaking rooms when matchmaking handoff fails.
+    // Canceled in onJoin when the 2nd player arrives, and in onDispose.
+    this.emptyTimeout = this.clock.setTimeout(
+      () => this.checkEmptyTimeout(),
+      EMPTY_ROOM_TIMEOUT_MS,
+    );
+    console.log(`[BattleRoom] Empty-room guard armed: ${EMPTY_ROOM_TIMEOUT_MS}ms`);
   }
 
   onJoin(client: Client, options: any, auth?: any) {
@@ -136,6 +153,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (this.state.players.size === 2) {
       this.state.status = "playing";
       this.gameStartTime = Date.now();
+      // Both players are in — cancel the empty-room watchdog.
+      if (this.emptyTimeout !== null) {
+        this.emptyTimeout.clear();
+        this.emptyTimeout = null;
+        console.log(`[BattleRoom] Empty-room guard disarmed (game started)`);
+      }
       // Use this.clock so the interval auto-cleans on dispose
       this.tickInterval = this.clock.setInterval(() => this.tick(), TICK_RATE_MS);
       console.log(`[BattleRoom] Game started!`);
@@ -183,7 +206,37 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       this.tickInterval.clear();
       this.tickInterval = null;
     }
+    if (this.emptyTimeout !== null) {
+      this.emptyTimeout.clear();
+      this.emptyTimeout = null;
+    }
     console.log(`[BattleRoom] Disposed`);
+  }
+
+  /**
+   * Empty-room watchdog callback. Fires EMPTY_ROOM_TIMEOUT_MS after onCreate.
+   * If the game hasn't started and there are fewer than 2 clients, dispose
+   * the room to prevent leaks (e.g., when one of the matched clients never
+   * successfully joined the BattleRoom after consuming the seat reservation).
+   */
+  private checkEmptyTimeout() {
+    // Game already started (e.g. the timeout raced with the 2nd-player join).
+    if (this.state.status === "playing") return;
+    // Both players actually present (defensive — should have been caught above).
+    if (this.clients.length >= 2) return;
+
+    console.warn(
+      `[BattleRoom] Empty-room timeout: only ${this.clients.length} client(s) ` +
+      `after ${EMPTY_ROOM_TIMEOUT_MS}ms — disposing to prevent leak. ` +
+      `BattleRoom was created but the second player never joined.`,
+    );
+    // Broadcast a clear error so any connected client knows what happened.
+    this.broadcast("roomTimeout", {
+      reason: "no_second_player",
+      timeoutMs: EMPTY_ROOM_TIMEOUT_MS,
+    });
+    // Disconnect all clients + dispose the room.
+    this.disconnect();
   }
 
   private tick() {
