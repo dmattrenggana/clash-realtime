@@ -57,7 +57,7 @@ export class BattleQueueRoom extends Room {
       this.handoffs.delete(client.sessionId);
       // Now it's safe to leave this client from the queue — they have
       // a live connection to the BattleRoom.
-      void client.leave().catch(() => { /* ignore */ });
+      void client.leave();
     });
   }
 
@@ -166,7 +166,7 @@ export class BattleQueueRoom extends Room {
       // Reservation will auto-expire after Colyseus's seatReservationTimeout
       // (default 15s in room config). Force-leave client so they can re-queue
       // or get a meaningful error.
-      void client.leave().catch(() => { /* ignore */ });
+      void client.leave();
     }, HANDOFF_TIMEOUT_MS);
 
     this.handoffs.set(sessionId, { battleRoomId, reservation, timeout });
