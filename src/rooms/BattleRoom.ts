@@ -271,11 +271,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       if (!enemy) return;
 
       // Cleanup dead units before moving
-      for (let i = player.units.length - 1; i >= 0; i--) {
-        if (player.units[i].hp <= 0) {
-          player.units.splice(i, 1);
+      player.units.forEach((unit, id) => {
+        if (unit.hp <= 0) {
+          player.units.delete(id);
         }
-      }
+      });
 
       player.units.forEach((unit) => {
         let targetX = 0;
@@ -441,8 +441,6 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
       for (let i = 0; i < spawnCount; i++) {
         const unit = new DeployedUnit();
-        // Generate a simple unique ID for this unit
-        unit.uid = `${client.sessionId}-${this.clock.currentTime}-${i}`;
         unit.cardId = payload.cardId;
         unit.team = player.team;
         
@@ -454,7 +452,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         unit.hp = CARD_HP[payload.cardId] || 100;
         unit.maxHp = unit.hp;
         unit.spawnTime = this.state.elapsedSec;
-        player.units.push(unit);
+
+        const unitId = `${client.sessionId}-${this.clock.currentTime}-${i}`;
+        player.units.set(unitId, unit);
       }
 
       console.log(`[BattleRoom] Team ${player.team} successfully pushed ${spawnCount} units to state for ${payload.cardId}`);

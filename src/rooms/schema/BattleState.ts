@@ -1,4 +1,4 @@
-import { Schema, type, MapSchema, ArraySchema } from "@colyseus/schema";
+import { Schema, type, MapSchema } from "@colyseus/schema";
 
 // === Constants (EXACT same as agones-clash-colyseus) ===
 export const INITIAL_TOWER_HP = { king: 500, princess: 350 };
@@ -38,7 +38,6 @@ export class Tower extends Schema {
 }
 
 export class DeployedUnit extends Schema {
-  @type("string") uid: string = "";
   @type("string") cardId: string = "";
   @type("uint8") team: number = 0;
   @type("float32") x: number = 0;
@@ -55,7 +54,7 @@ export class Player extends Schema {
   @type("float32") elixir: number = 5;
   @type("boolean") connected: boolean = true;
   @type([Tower]) towers = new ArraySchema<Tower>();
-  @type([DeployedUnit]) units = new ArraySchema<DeployedUnit>();
+  @type({ map: DeployedUnit }) units = new MapSchema<DeployedUnit>();
 }
 
 export class BattleState extends Schema {
