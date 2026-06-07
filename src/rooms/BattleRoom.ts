@@ -9,6 +9,7 @@ import {
   Tower,
   DeployedUnit,
   CARD_HP,
+  CARD_SPAWN_COUNT,
   CARD_COST,
   CARD_DPS,
   INITIAL_TOWER_HP,
@@ -131,6 +132,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const team = this.state.players.size;
     const player = new Player();
     player.walletAddress = wallet;
+    player.nickname = options.nickname || "Anonymous";
     player.team = team;
     player.connected = true;
 
@@ -429,17 +431,28 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         return;
       }
 
+      const spawnCount = CARD_SPAWN_COUNT[payload.cardId] || 1;
       player.elixir -= cost;
-      const unit = new DeployedUnit();
-      unit.cardId = payload.cardId;
-      unit.team = player.team;
-      unit.x = payload.x;
-      unit.z = payload.z;
-      unit.hp = CARD_HP[payload.cardId] || 100;
-      unit.maxHp = unit.hp;
-      unit.spawnTime = this.state.elapsedSec;
-      player.units.push(unit);
-      console.log(`[BattleRoom] Team ${player.team} deployed ${payload.cardId}`);
+
+      for (let i = 0; i < spawnCount; i++) {
+        const unit = new DeployedUnit();
+        // Generate a simple unique ID for this unit
+        unit.uid = `${client.sessionId}-${this.clock.currentTime}-${i}`;
+        unit.cardId = payload.cardId;
+        unit.team = player.team;
+        
+        // Add slight offset for multi-unit spawns so they don't overlap perfectly
+        const offsetX = spawnCount > 1 ? (i - (spawnCount - 1) / 2) * 0.8 : 0;
+        unit.x = payload.x + offsetX;
+        unit.z = payload.z;
+        
+        unit.hp = CARD_HP[payload.cardId] || 100;
+        unit.maxHp = unit.hp;
+        unit.spawnTime = this.state.elapsedSec;
+        player.units.push(unit);
+      }
+
+      console.log(`[BattleRoom] Team ${player.team} successfully pushed ${spawnCount} units to state for ${payload.cardId}`);
     }),
 
     surrender: validate(surrenderSchema, (client, _payload) => {

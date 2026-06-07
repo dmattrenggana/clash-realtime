@@ -23,6 +23,12 @@ export const CARD_COST: Record<string, number> = {
   barrel_bomb: 2, meteor: 3, incubus: 2,
 };
 
+export const CARD_SPAWN_COUNT: Record<string, number> = {
+  knight: 1, archer: 2, giant: 1, wyvern: 1, wizard: 1,
+  goblin: 3, barbarian: 2, healer: 1, gunslinger: 1,
+  barrel_bomb: 1, meteor: 1, incubus: 3,
+};
+
 // === Schemas ===
 
 export class Tower extends Schema {
@@ -32,6 +38,7 @@ export class Tower extends Schema {
 }
 
 export class DeployedUnit extends Schema {
+  @type("string") uid: string = "";
   @type("string") cardId: string = "";
   @type("uint8") team: number = 0;
   @type("float32") x: number = 0;
@@ -43,6 +50,7 @@ export class DeployedUnit extends Schema {
 
 export class Player extends Schema {
   @type("string") walletAddress: string = "";
+  @type("string") nickname: string = "";
   @type("uint8") team: number = 0;
   @type("float32") elixir: number = 5;
   @type("boolean") connected: boolean = true;
