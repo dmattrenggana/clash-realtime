@@ -31,7 +31,7 @@ interface InFlightHandoff {
 
 export class BattleQueueRoom extends Room {
   maxClients = 100; // many can wait
-  private pending = new Map<string, { wallet?: string }>();
+  private pending = new Map<string, { wallet?: string, nickname?: string }>();
   // Tracks in-flight handoffs so we can cancel timeouts on matchAccepted / leave / dispose
   private handoffs = new Map<string, InFlightHandoff>();
 
@@ -62,8 +62,13 @@ export class BattleQueueRoom extends Room {
   }
 
   onJoin(client: Client, options: any) {
-    console.log(`[BattleQueue] ${client.sessionId} joined (wallet: ${options.wallet || "anonymous"})`);
-    this.pending.set(client.sessionId, { wallet: options.wallet });
+    // Robust extraction: handles both raw wallet string or the new joinOptions object
+    const data = typeof options.wallet === 'object' ? options.wallet : options;
+    const wallet = data.wallet || "anonymous";
+    const nickname = data.nickname || "Anonymous";
+
+    console.log(`[BattleQueue] ${client.sessionId} joined (wallet: ${wallet}, nickname: ${nickname})`);
+    this.pending.set(client.sessionId, { wallet, nickname });
     client.send("queued", { position: this.pending.size });
 
     if (this.pending.size >= QUEUE_TARGET) {
@@ -119,8 +124,8 @@ export class BattleQueueRoom extends Room {
       console.log(`[BattleQueue] Matched ${idA} vs ${idB} → room ${battleRoom.roomId}`);
 
       // 2. Reserve seats (creates seat reservations; client uses these to join)
-      const resA = await matchMaker.reserveSeatFor(battleRoom, { wallet: a?.wallet });
-      const resB = await matchMaker.reserveSeatFor(battleRoom, { wallet: b?.wallet });
+      const resA = await matchMaker.reserveSeatFor(battleRoom, { wallet: a?.wallet, nickname: a?.nickname });
+      const resB = await matchMaker.reserveSeatFor(battleRoom, { wallet: b?.wallet, nickname: b?.nickname });
 
       // 3. Start handoff for each client
       const clientA = this.clients.find((c) => c.sessionId === idA);
