@@ -293,7 +293,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         });
 
         // 2. Scan Tower Lawan
-        enemy.towers.forEach((t) => {
+        enemy.towers.forEach((t: Tower) => {
           if (t.hp <= 0) return;
           // Koordinat tower statis
           const tx = t.type === "king" ? 0 : (unit.x > 0 ? 6 : -6);
@@ -342,7 +342,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           }
         });
 
-        enemy.towers.forEach((t) => {
+        enemy.towers.forEach((t: Tower) => {
           if (t.hp <= 0) return;
           const tx = t.type === "king" ? 0 : (unit.x > 0 ? 6 : -6);
           const tz = enemy.team === 0 ? 14.5 : -14.5;
@@ -366,7 +366,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private checkWinCondition() {
     const players: Player[] = Array.from(this.state.players.values());
     for (const player of players) {
-      const living = player.towers.filter((t) => t.hp > 0).length;
+      const living = player.towers.filter((t: Tower) => t.hp > 0).length;
       if (living === 0) {
         const winner = players.find((p) => p.team !== player.team);
         this.state.winnerTeam = winner ? String(winner.team) : "draw";
@@ -375,8 +375,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       }
     }
     if (this.state.elapsedSec >= MAX_DURATION) {
-      const p0 = players.find((p) => p.team === 0)?.towers.filter((t) => t.hp > 0).length || 0;
-      const p1 = players.find((p) => p.team === 1)?.towers.filter((t) => t.hp > 0).length || 0;
+      const p0 = players.find((p) => p.team === 0)?.towers.filter((t: Tower) => t.hp > 0).length || 0;
+      const p1 = players.find((p) => p.team === 1)?.towers.filter((t: Tower) => t.hp > 0).length || 0;
       this.state.winnerTeam = p0 > p1 ? "0" : p1 > p0 ? "1" : "draw";
       this.endMatch();
     }

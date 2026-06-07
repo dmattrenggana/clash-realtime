@@ -1,4 +1,4 @@
-import { Schema, type, MapSchema } from "@colyseus/schema";
+import { Schema, type, MapSchema, ArraySchema } from "@colyseus/schema";
 
 // === Constants (EXACT same as agones-clash-colyseus) ===
 export const INITIAL_TOWER_HP = { king: 500, princess: 350 };
