@@ -79,10 +79,15 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // Read env here (not at module load) — dotenv loads .env.production
     // AFTER this module is imported, so module-level reads would be empty.
     const allowAnon = process.env.ALLOW_ANON_USERS === "true";
+    
+    // Robust wallet extraction from options
+    const walletFromOptions = (typeof options.wallet === 'object' && options.wallet !== null)
+      ? options.wallet.wallet
+      : (options.wallet || "anonymous");
 
     // Dev/anon mode: bypass ALL auth. Any token (or none) is accepted as anonymous.
     if (allowAnon) {
-      return { userId: options.wallet || "anonymous", wallet: options.wallet || "anonymous" };
+      return { userId: walletFromOptions, wallet: walletFromOptions };
     }
     // Production: require non-empty token
     if (!token) {
@@ -91,7 +96,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     try {
       // verifyAuthToken handles JWKS fetch, signature check, and expiration.
       const claims = await getPrivy().verifyAuthToken(token);
-      return { userId: claims.userId, wallet: options.wallet || "" };
+      return { userId: claims.userId, wallet: walletFromOptions };
     } catch (err) {
       throw new Error("Invalid auth token");
     }
@@ -124,15 +129,15 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   }
 
   onJoin(client: Client, options: any, auth?: any) {
-    const wallet =
-      (auth && auth.wallet) ||
-      options.wallet ||
-      "anonymous";
+    // Ambil wallet dari auth (Privy) atau options, pastikan string
+    const wallet = String(auth?.wallet || options?.wallet || "anonymous");
+    // Ambil nickname dari options
+    const nickname = String(options?.nickname || "Anonymous");
 
     const team = this.state.players.size;
     const player = new Player();
     player.walletAddress = wallet;
-    player.nickname = options.nickname || "Anonymous";
+    player.nickname = nickname;
     player.team = team;
     player.connected = true;
 

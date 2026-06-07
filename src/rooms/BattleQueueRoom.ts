@@ -62,10 +62,10 @@ export class BattleQueueRoom extends Room {
   }
 
   onJoin(client: Client, options: any) {
-    // Robust extraction: handles both raw wallet string or the new joinOptions object
-    const data = typeof options.wallet === 'object' ? options.wallet : options;
-    const wallet = data.wallet || "anonymous";
-    const nickname = data.nickname || "Anonymous";
+    // Pastikan kita mengambil data dari root options atau nested wallet object
+    const data = (options?.wallet && typeof options.wallet === 'object') ? options.wallet : options;
+    const wallet = String(data?.wallet || "anonymous");
+    const nickname = String(data?.nickname || "Anonymous");
 
     console.log(`[BattleQueue] ${client.sessionId} joined (wallet: ${wallet}, nickname: ${nickname})`);
     this.pending.set(client.sessionId, { wallet, nickname });
