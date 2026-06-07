@@ -156,7 +156,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     player.towers.push(t1, t2, t3);
 
     this.state.players.set(client.sessionId, player);
-    console.log(`[BattleRoom] ${client.sessionId} joined (wallet: ${wallet}, team: ${team})`);
+    console.log(`[BattleRoom] ${client.sessionId} joined (wallet: ${wallet}, team: ${team}, nickname: ${nickname})`);
 
     if (this.state.players.size === 2) {
       this.state.status = "playing";
