@@ -24,8 +24,8 @@ export const CARD_COST: Record<string, number> = {
 };
 
 export const CARD_SPAWN_COUNT: Record<string, number> = {
-  knight: 1, archer: 2, giant: 1, wyvern: 1, wizard: 1,
-  goblin: 3, barbarian: 2, healer: 1, gunslinger: 1,
+  knight: 1, archer: 1, giant: 1, wyvern: 1, wizard: 1,
+  goblin: 3, barbarian: 1, healer: 1, gunslinger: 1,
   barrel_bomb: 1, meteor: 1, incubus: 3,
 };
 
