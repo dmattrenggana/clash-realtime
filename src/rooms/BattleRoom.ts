@@ -507,17 +507,43 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           return;
         }
 
+        // --- Pathfinding / Waypoint Routing ---
+        let moveTargetX = targetX;
+        let moveTargetZ = targetZ;
+
+        const isAir = AIR_UNITS.has(unit.cardId);
+        if (!isAir) {
+          // Ground units must cross the river (Z=0) via bridges (Left: X=-6, Right: X=6)
+          const currentSide = unit.z > 0 ? 1 : -1;
+          const targetSide = targetZ > 0 ? 1 : -1;
+
+          // If unit and target are on different sides of the river, and unit hasn't crossed/reached the bridge yet
+          if (currentSide !== targetSide && Math.abs(unit.z) > 0.5) {
+            const leftBridgeDist = Math.pow(unit.x - (-6), 2) + Math.pow(unit.z, 2);
+            const rightBridgeDist = Math.pow(unit.x - 6, 2) + Math.pow(unit.z, 2);
+            const bridgeX = leftBridgeDist < rightBridgeDist ? -6 : 6;
+
+            moveTargetX = bridgeX;
+            moveTargetZ = 0; // Route to the river centerline on the bridge
+          }
+        }
+
         // Insting: Berhenti jika sudah dalam jangkauan serang
         const attackRange = CARD_RANGE[unit.cardId] ?? 2.2;
 
         if (minDist > attackRange) {
-          const dx = targetX - unit.x;
-          const dz = targetZ - unit.z;
-          const speed = 2.5;
-          const moveStep = (speed * TICK_RATE_MS) / 1000;
+          const dx = moveTargetX - unit.x;
+          const dz = moveTargetZ - unit.z;
+          const distToRoute = Math.sqrt(dx * dx + dz * dz);
           
-          unit.x += (dx / minDist) * moveStep;
-          unit.z += (dz / minDist) * moveStep;
+          if (distToRoute > 0.001) {
+            const speed = 2.5;
+            const moveStep = (speed * TICK_RATE_MS) / 1000;
+            const actualStep = Math.min(moveStep, distToRoute);
+            
+            unit.x += (dx / distToRoute) * actualStep;
+            unit.z += (dz / distToRoute) * actualStep;
+          }
           unit.action = "walk";
           unit.targetId = "";
         } else {
