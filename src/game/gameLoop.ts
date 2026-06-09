@@ -107,38 +107,96 @@ function moveUnits(state: BattleState, tickRateMs: number): void {
       let targetZ = 0;
       let minDist = Infinity;
 
-      // Giant only targets buildings (Towers) and ignore troops
+      const isHealer = unit.cardId === "healer";
       const targetsBuildingsOnly = unit.cardId === "giant";
 
-      // 1. Scan Unit Lawan (skip if building-only target)
-      if (!targetsBuildingsOnly) {
-        enemy.units.forEach((eUnit) => {
-          // Skip spell cards (invulnerable & untargetable)
-          if (SPELL_CARDS.has(eUnit.cardId)) return;
+      if (isHealer) {
+        // --- Healer Movement AI: Scan for Allies to Follow/Heal ---
+        let closestAlly: DeployedUnit | null = null;
+        let closestAllyUID = "";
+        let minAllyDist = Infinity;
 
-          // Melee ground units cannot target flying units
-          if (FLYING_UNITS.has(eUnit.cardId) && !CAN_ATTACK_AIR.has(unit.cardId)) return;
+        // 1. First priority: closest damaged ally
+        player.units.forEach((ally, uid) => {
+          if (ally === unit) return; // Don't target yourself
+          if (ally.hp <= 0 || ally.hp >= ally.maxHp) return;
+          if (SPELL_CARDS.has(ally.cardId)) return; // Don't try to heal spells
 
-          const d = Math.sqrt(Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2));
+          const d = Math.sqrt(Math.pow(ally.x - unit.x, 2) + Math.pow(ally.z - unit.z, 2));
+          if (d < minAllyDist) {
+            minAllyDist = d;
+            closestAlly = ally;
+            closestAllyUID = uid;
+          }
+        });
+
+        // 2. Second priority: closest undamaged ally (if no damaged ones exist)
+        if (!closestAlly) {
+          player.units.forEach((ally, uid) => {
+            if (ally === unit) return;
+            if (ally.hp <= 0) return;
+            if (SPELL_CARDS.has(ally.cardId)) return;
+
+            const d = Math.sqrt(Math.pow(ally.x - unit.x, 2) + Math.pow(ally.z - unit.z, 2));
+            if (d < minAllyDist) {
+              minAllyDist = d;
+              closestAlly = ally;
+              closestAllyUID = uid;
+            }
+          });
+        }
+
+        if (closestAlly) {
+          minDist = minAllyDist;
+          targetX = closestAlly.x;
+          targetZ = closestAlly.z;
+          // Set targetId to follow them
+          unit.targetId = closestAllyUID;
+        } else {
+          // 3. Fallback: No allies exist, walk towards closest enemy tower!
+          enemy.towers.forEach((t: Tower, idx: number) => {
+            if (t.hp <= 0) return;
+            const { x: tx, z: tz } = getTowerCoords(t, enemy.team, idx);
+            const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
+            if (d < minDist) {
+              minDist = d;
+              targetX = tx;
+              targetZ = tz;
+            }
+          });
+        }
+      } else {
+        // --- Standard Unit Targeting (Knight, Archer, Giant, etc.) ---
+        // 1. Scan Unit Lawan (skip if building-only target)
+        if (!targetsBuildingsOnly) {
+          enemy.units.forEach((eUnit) => {
+            // Skip spell cards (invulnerable & untargetable)
+            if (SPELL_CARDS.has(eUnit.cardId)) return;
+
+            // Melee ground units cannot target flying units
+            if (FLYING_UNITS.has(eUnit.cardId) && !CAN_ATTACK_AIR.has(unit.cardId)) return;
+
+            const d = Math.sqrt(Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2));
+            if (d < minDist) {
+              minDist = d;
+              targetX = eUnit.x;
+              targetZ = eUnit.z;
+            }
+          });
+        }
+
+        // 2. Scan Tower Lawan
+        enemy.towers.forEach((t: Tower, idx: number) => {
+          if (t.hp <= 0) return;
+          const { x: tx, z: tz } = getTowerCoords(t, enemy.team, idx);
+          const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
           if (d < minDist) {
             minDist = d;
-            targetX = eUnit.x;
-            targetZ = eUnit.z;
+            targetX = tx;
+            targetZ = tz;
           }
         });
       }
-
-      // 2. Scan Tower Lawan
-      enemy.towers.forEach((t: Tower, idx: number) => {
-        if (t.hp <= 0) return;
-        const { x: tx, z: tz } = getTowerCoords(t, enemy.team, idx);
-        const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
-        if (d < minDist) {
-          minDist = d;
-          targetX = tx;
-          targetZ = tz;
-        }
-      });
 
       if (minDist === Infinity) {
         unit.action = "idle";
