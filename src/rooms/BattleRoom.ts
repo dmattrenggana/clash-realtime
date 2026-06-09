@@ -296,7 +296,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${gameServerSecret}`
+          "x-game-server-secret": gameServerSecret
         },
         body: JSON.stringify({
           playerTowersAlive,
