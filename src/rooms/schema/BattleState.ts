@@ -66,7 +66,7 @@ export const CARD_SPAWN_COUNT: Record<string, number> = {
 };
 
 /** Set of units that fly. Flying units ignore ground unit collisions. */
-export const AIR_UNITS: Set<string> = new Set(["wyvern", "incubus", "healer"]);
+export const FLYING_UNITS: Set<string> = new Set(["wyvern", "incubus", "healer"]);
 
 /** Set of units that can attack flying/air targets. Melee ground units cannot hit air. */
 export const CAN_ATTACK_AIR: Set<string> = new Set(["archer", "wyvern", "wizard", "gunslinger", "incubus"]);

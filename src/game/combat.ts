@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { DeployedUnit, Player, Projectile, Tower, SPELL_CARDS, AIR_UNITS, CAN_ATTACK_AIR } from "../rooms/schema/BattleState.js";
+import { DeployedUnit, Player, Projectile, Tower, SPELL_CARDS, FLYING_UNITS, CAN_ATTACK_AIR } from "../rooms/schema/BattleState.js";
 import { CARD_ATTACK_SPEED, CARD_RANGE, CARD_PROJECTILE_SPEED, CARD_ATTACK_DAMAGE, CARD_ATTACK_SPLASH } from "../rooms/schema/BattleState.js";
 import { getTowerCoords } from "./pathfinding.js";
 
@@ -37,7 +37,7 @@ export function applyUnitDamage(
       if (!targetsBuildingsOnly) {
         enemy.units.forEach((eUnit, uid) => {
           // Melee ground units cannot attack flying units
-          if (AIR_UNITS.has(eUnit.cardId) && !CAN_ATTACK_AIR.has(unit.cardId)) return;
+          if (FLYING_UNITS.has(eUnit.cardId) && !CAN_ATTACK_AIR.has(unit.cardId)) return;
 
           const d = Math.sqrt(Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2));
           if (d < minDist) {
