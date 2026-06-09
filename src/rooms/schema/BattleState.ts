@@ -35,7 +35,7 @@ export const CARD_RANGE: Record<string, number> = {
 
 // Projectile speed (units per second). If 0, the attack is melee/instant and spawns no projectile.
 export const CARD_PROJECTILE_SPEED: Record<string, number> = {
-  knight: 0, archer: 8.0, giant: 0, wyvern: 0, wizard: 6.0,
+  knight: 0, archer: 8.0, giant: 0, wyvern: 6.0, wizard: 6.0,
   goblin: 0, barbarian: 0, healer: 6.0, gunslinger: 10.0,
   barrel_bomb: 0, meteor: 0, incubus: 0,
 };

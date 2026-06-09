@@ -473,15 +473,20 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         let targetZ = 0;
         let minDist = Infinity;
 
-        // 1. Scan Unit Lawan
-        enemy.units.forEach((eUnit) => {
-          const d = Math.sqrt(Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2));
-          if (d < minDist) {
-            minDist = d;
-            targetX = eUnit.x;
-            targetZ = eUnit.z;
-          }
-        });
+        // Giant only targets buildings (Towers) and ignore troops
+        const targetsBuildingsOnly = unit.cardId === "giant";
+
+        // 1. Scan Unit Lawan (skip if building-only target)
+        if (!targetsBuildingsOnly) {
+          enemy.units.forEach((eUnit) => {
+            const d = Math.sqrt(Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2));
+            if (d < minDist) {
+              minDist = d;
+              targetX = eUnit.x;
+              targetZ = eUnit.z;
+            }
+          });
+        }
 
         // 2. Scan Tower Lawan
         enemy.towers.forEach((t: Tower) => {
@@ -536,15 +541,17 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         if (unit.cardId === "healer") {
           // Healers look for allies with lowest HP%
           let healTarget: DeployedUnit | null = null;
+          let healTargetUID = "";
           let minHpRatio = 1.1;
 
-          attacker.units.forEach((ally) => {
+          attacker.units.forEach((ally, uid) => {
             if (ally.hp <= 0 || ally.hp >= ally.maxHp) return;
             if (SPELL_CARDS.has(ally.cardId)) return;
             const ratio = ally.hp / ally.maxHp;
             if (ratio < minHpRatio) {
               minHpRatio = ratio;
               healTarget = ally;
+              healTargetUID = uid;
             }
           });
 
@@ -553,7 +560,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
             const range = CARD_RANGE[unit.cardId] ?? 3.5;
             if (d <= range) {
               unit.action = "attack";
-              unit.targetId = ""; // No targetId for healing
+              unit.targetId = healTargetUID; // Track the ally's UID so client draws beam
               
               const now = this.state.elapsedSec;
               const attackSpeed = CARD_ATTACK_SPEED[unit.cardId] || 1.0;
@@ -587,13 +594,17 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         let closestTarget: { hp: number; x: number; z: number; uid: string; team: number } | null = null;
         let minDist = Infinity;
 
-        enemy.units.forEach((eUnit, uid) => {
-          const d = Math.sqrt(Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2));
-          if (d < minDist) {
-            minDist = d;
-            closestTarget = { hp: eUnit.hp, x: eUnit.x, z: eUnit.z, uid, team: eUnit.team };
-          }
-        });
+        const targetsBuildingsOnly = unit.cardId === "giant";
+
+        if (!targetsBuildingsOnly) {
+          enemy.units.forEach((eUnit, uid) => {
+            const d = Math.sqrt(Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2));
+            if (d < minDist) {
+              minDist = d;
+              closestTarget = { hp: eUnit.hp, x: eUnit.x, z: eUnit.z, uid, team: eUnit.team };
+            }
+          });
+        }
 
         enemy.towers.forEach((t: Tower) => {
           if (t.hp <= 0) return;
@@ -778,7 +789,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
       // Zone validation: each team has its own half
       // team 0 -> player side: z > 0; team 1 -> enemy side: z < 0
+      // Spells (like meteor or barrel_bomb) ignore zone restrictions and can be spawned anywhere
+      const isSpell = SPELL_CARDS.has(payload.cardId);
       const isMySide =
+        isSpell ||
         (player.team === 0 && payload.z > 0) ||
         (player.team === 1 && payload.z < 0);
       if (!isMySide) {
