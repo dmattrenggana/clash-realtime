@@ -79,6 +79,19 @@ const surrenderSchema = z.object({}).optional();
  *   onLeave       -> remove from state; end match if game in progress
  *   onDispose     -> clock.setInterval is auto-cleaned
  */
+
+// --- Helper for Tower Coordinates ---
+// Maps to frontend's INITIAL_TOWERS positions
+function getTowerCoords(tower: Tower, towerTeam: number, attackerX: number): { x: number; z: number } {
+  if (tower.type === "king") {
+    return { x: 0, z: towerTeam === 0 ? 13 : -13 };
+  } else {
+    // Princess tower: determine left or right based on the attacker's X position to target the nearest one
+    const tx = attackerX > 0 ? 6 : -6;
+    return { x: tx, z: towerTeam === 0 ? 10 : -10 };
+  }
+}
+
 export class BattleRoom extends Room<{ state: BattleState }> {
   maxClients = 2;
   maxMessagesPerSecond = 30;
@@ -383,8 +396,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // Damage enemy towers in radius
     enemy.towers.forEach((t) => {
       if (t.hp <= 0) return;
-      const tx = t.type === "king" ? 0 : (spell.x > 0 ? 6 : -6);
-      const tz = enemy.team === 0 ? 14.5 : -14.5;
+      const { x: tx, z: tz } = getTowerCoords(t, enemy.team, spell.x);
       const d = Math.sqrt(
         Math.pow(tx - spell.x, 2) + Math.pow(tz - spell.z, 2)
       );
@@ -474,9 +486,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         // 2. Scan Tower Lawan
         enemy.towers.forEach((t: Tower) => {
           if (t.hp <= 0) return;
-          // Koordinat tower statis
-          const tx = t.type === "king" ? 0 : (unit.x > 0 ? 6 : -6);
-          const tz = enemy.team === 0 ? 14.5 : -14.5;
+          const { x: tx, z: tz } = getTowerCoords(t, enemy.team, unit.x);
           const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
           if (d < minDist) {
             minDist = d;
@@ -587,8 +597,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
         enemy.towers.forEach((t: Tower) => {
           if (t.hp <= 0) return;
-          const tx = t.type === "king" ? 0 : (unit.x > 0 ? 6 : -6);
-          const tz = enemy.team === 0 ? 14.5 : -14.5;
+          const { x: tx, z: tz } = getTowerCoords(t, enemy.team, unit.x);
           const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
           if (d < minDist) {
             minDist = d;
@@ -631,8 +640,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
                 if (d <= splash) eUnit.hp = Math.max(0, eUnit.hp - damage);
               });
               enemy.towers.forEach((t) => {
-                const tx = t.type === "king" ? 0 : (unit.x > 0 ? 6 : -6);
-                const tz = enemy.team === 0 ? 14.5 : -14.5;
+                const { x: tx, z: tz } = getTowerCoords(t, enemy.team, unit.x);
                 const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
                 if (d <= splash) t.hp = Math.max(0, t.hp - damage);
               });
@@ -683,8 +691,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
               if (d <= p.splashRadius) eUnit.hp = Math.max(0, eUnit.hp - p.damage);
             });
             enemy.towers.forEach((t) => {
-              const tx = t.type === "king" ? 0 : (p.targetX > 0 ? 6 : -6);
-              const tz = enemy.team === 0 ? 14.5 : -14.5;
+              const { x: tx, z: tz } = getTowerCoords(t, enemy.team, p.targetX);
               const d = Math.sqrt(Math.pow(tx - p.targetX, 2) + Math.pow(tz - p.targetZ, 2));
               if (d <= p.splashRadius) t.hp = Math.max(0, t.hp - p.damage);
             });
