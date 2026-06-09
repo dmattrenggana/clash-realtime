@@ -155,14 +155,20 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     player.connected = true;
 
     const t1 = new Tower();
+    t1.uid = randomBytes(4).toString("hex");
+    t1.team = team;
     t1.type = "princess";
     t1.hp = INITIAL_TOWER_HP.princess;
     t1.maxHp = INITIAL_TOWER_HP.princess;
     const t2 = new Tower();
+    t2.uid = randomBytes(4).toString("hex");
+    t2.team = team;
     t2.type = "king";
     t2.hp = INITIAL_TOWER_HP.king;
     t2.maxHp = INITIAL_TOWER_HP.king;
     const t3 = new Tower();
+    t3.uid = randomBytes(4).toString("hex");
+    t3.team = team;
     t3.type = "princess";
     t3.hp = INITIAL_TOWER_HP.princess;
     t3.maxHp = INITIAL_TOWER_HP.princess;

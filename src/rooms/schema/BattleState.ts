@@ -115,6 +115,8 @@ export const SPELL_DAMAGE: Record<string, number> = {
 // === Schemas ===
 
 export class Tower extends Schema {
+  @type("string") uid: string = "";
+  @type("uint8") team: number = 0;
   @type("string") type: string = "princess";
   @type("uint16") hp: number = 350;
   @type("uint16") maxHp: number = 350;
