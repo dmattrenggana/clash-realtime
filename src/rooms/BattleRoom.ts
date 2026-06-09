@@ -12,23 +12,8 @@ import {
   CARD_HP,
   CARD_SPAWN_COUNT,
   CARD_COST,
-  CARD_DPS,
-  CARD_ATTACK_SPEED,
-  CARD_ATTACK_DAMAGE,
-  CARD_RANGE,
-  CARD_PROJECTILE_SPEED,
-  CARD_ATTACK_SPLASH,
   INITIAL_TOWER_HP,
-  ELIXIR_REGEN_PER_SEC,
-  MAX_DURATION,
   SPELL_CARDS,
-  SPELL_SPLASH_RADIUS,
-  SPELL_TRIGGER,
-  SPELL_DETONATE_AFTER_MS,
-  SPELL_TRIGGER_RADIUS,
-  SPELL_DAMAGE,
-  AIR_UNITS,
-  Projectile,
 } from "./schema/BattleState.js";
 
 const TICK_RATE_MS = 100; // 10 Hz server tick
@@ -80,18 +65,6 @@ const surrenderSchema = z.object({}).optional();
  *   onLeave       -> remove from state; end match if game in progress
  *   onDispose     -> clock.setInterval is auto-cleaned
  */
-
-// --- Helper for Tower Coordinates ---
-// Maps to frontend's INITIAL_TOWERS positions
-function getTowerCoords(tower: Tower, towerTeam: number, attackerX: number): { x: number; z: number } {
-  if (tower.type === "king") {
-    return { x: 0, z: towerTeam === 0 ? 13 : -13 };
-  } else {
-    // Princess tower: determine left or right based on the attacker's X position to target the nearest one
-    const tx = attackerX > 0 ? 6 : -6;
-    return { x: tx, z: towerTeam === 0 ? 10 : -10 };
-  }
-}
 
 export class BattleRoom extends Room<{ state: BattleState }> {
   maxClients = 2;
