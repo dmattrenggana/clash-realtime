@@ -293,6 +293,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
     this.moveUnits();
     this.applyUnitDamage();
+    this.processTowerAttacks();
     this.updateProjectiles();
     this.processSpells();
     this.checkWinCondition();
@@ -722,6 +723,74 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     });
 
     toRemove.forEach(pid => this.state.projectiles.delete(pid));
+  }
+
+  private processTowerAttacks() {
+    const playerList = Array.from(this.state.players.values());
+    const now = this.state.elapsedSec;
+
+    playerList.forEach((attacker) => {
+      const enemy = playerList.find((p) => p.team !== attacker.team);
+      if (!enemy) return;
+
+      attacker.towers.forEach((tower, idx) => {
+        if (tower.hp <= 0) return;
+
+        // Stats based on Tower Type
+        const isKing = tower.type === "king";
+        const range = isKing ? 7.0 : 7.5;
+        const damage = isKing ? 20 : 15;
+        const cooldown = isKing ? 1.2 : 1.0;
+
+        // Check Cooldown
+        if (now - tower.lastAttackTime < cooldown) return;
+
+        // Map index in towers array directly to absolute coordinates
+        // Index 0: Left Princess Tower (X=-6), Index 1: King Tower (X=0), Index 2: Right Princess Tower (X=6)
+        const tx = idx === 1 ? 0 : (idx === 0 ? -6 : 6);
+        const tz = attacker.team === 0 ? (isKing ? 13 : 10) : (isKing ? -13 : -10);
+
+        // Find closest enemy unit within range
+        let closestUnit: DeployedUnit | null = null;
+        let closestUnitUID = "";
+        let minDist = Infinity;
+
+        enemy.units.forEach((eUnit, uid) => {
+          if (eUnit.hp <= 0) return;
+          const d = Math.sqrt(Math.pow(eUnit.x - tx, 2) + Math.pow(eUnit.z - tz, 2));
+          if (d < minDist && d <= range) {
+            minDist = d;
+            closestUnit = eUnit;
+            closestUnitUID = uid;
+          }
+        });
+
+        if (closestUnit) {
+          // Trigger Attack
+          tower.lastAttackTime = now;
+          tower.targetId = closestUnitUID;
+
+          // Spawn Cannonball Projectile (both Princess & King shoot cannonballs per user request!)
+          const pid = randomBytes(8).toString("hex");
+          const projectile = new Projectile();
+          projectile.id = pid;
+          projectile.sourceCardId = "cannonball"; // Renders as cannonball 3D mesh
+          projectile.team = attacker.team;
+          projectile.x = tx;
+          projectile.z = tz;
+          projectile.targetX = closestUnit.x;
+          projectile.targetZ = closestUnit.z;
+          projectile.targetId = closestUnitUID;
+          projectile.speed = 7.0; // Steady projectile speed
+          projectile.damage = damage;
+          projectile.splashRadius = 0; // Towers do single-target damage
+
+          this.state.projectiles.set(pid, projectile);
+        } else {
+          tower.targetId = "";
+        }
+      });
+    });
   }
 
   private checkWinCondition() {

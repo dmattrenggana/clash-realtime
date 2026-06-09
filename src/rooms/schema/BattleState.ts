@@ -120,6 +120,8 @@ export class Tower extends Schema {
   @type("string") type: string = "princess";
   @type("uint16") hp: number = 350;
   @type("uint16") maxHp: number = 350;
+  @type("float32") lastAttackTime: number = 0;
+  @type("string") targetId: string = "";
 }
 
 export class DeployedUnit extends Schema {
