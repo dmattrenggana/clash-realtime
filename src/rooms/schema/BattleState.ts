@@ -29,6 +29,9 @@ export const CARD_SPAWN_COUNT: Record<string, number> = {
   barrel_bomb: 1, meteor: 1, incubus: 3,
 };
 
+/** Set of units that fly. Flying units ignore ground unit collisions. */
+export const AIR_UNITS: Set<string> = new Set(["wyvern", "incubus", "healer"]);
+
 /**
  * Server-side spell-card metadata (mirror of client's cards.ts).
  * Spells are STATIC AoE effects. They never move, never auto-target,

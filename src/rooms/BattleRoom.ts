@@ -21,6 +21,7 @@ import {
   SPELL_DETONATE_AFTER_MS,
   SPELL_TRIGGER_RADIUS,
   SPELL_DAMAGE,
+  AIR_UNITS,
 } from "./schema/BattleState.js";
 
 const TICK_RATE_MS = 100; // 10 Hz server tick
@@ -379,24 +380,63 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
   private moveUnits() {
     const playerList = Array.from(this.state.players.values());
-    playerList.forEach((player) => {
-      const enemy = playerList.find((p) => p.team !== player.team);
-      if (!enemy) return;
 
+    // 1. First, gather all alive troop units across both teams for collision checking
+    const allAliveTroops: { unit: DeployedUnit; isAir: boolean }[] = [];
+    playerList.forEach((player) => {
       // Cleanup dead units before moving
       player.units.forEach((unit, id) => {
         if (unit.hp <= 0) {
           player.units.delete(id);
+        } else if (!SPELL_CARDS.has(unit.cardId)) {
+          allAliveTroops.push({ unit, isAir: AIR_UNITS.has(unit.cardId) });
         }
       });
+    });
+
+    // 2. Process movement and collision separation
+    playerList.forEach((player) => {
+      const enemy = playerList.find((p) => p.team !== player.team);
+      if (!enemy) return;
 
       player.units.forEach((unit) => {
-        // Spells (meteor / barrel_bomb) are STATIC AoE effects. They
-        // never move, never seek a target — that logic is handled in
-        // processSpells() / detonateSpell(). Skip them here so the
-        // troop pathfinding branch can't pull them around.
+        // Skip spells
         if (SPELL_CARDS.has(unit.cardId)) return;
 
+        const isUnitAir = AIR_UNITS.has(unit.cardId);
+
+        // --- Separation / Collision Avoidance ---
+        let pushX = 0;
+        let pushZ = 0;
+        const pushRadius = 1.2; // The radius within which units push each other
+
+        allAliveTroops.forEach((other) => {
+          if (other.unit === unit) return; // Don't push yourself
+          if (isUnitAir !== other.isAir) return; // Air and Ground ignore each other
+
+          const dx = unit.x - other.unit.x;
+          const dz = unit.z - other.unit.z;
+          const distSq = dx * dx + dz * dz;
+
+          if (distSq < pushRadius * pushRadius && distSq > 0.0001) {
+            const dist = Math.sqrt(distSq);
+            // Stronger push the closer they are
+            const pushFactor = (pushRadius - dist) / dist; 
+            pushX += dx * pushFactor;
+            pushZ += dz * pushFactor;
+          } else if (distSq <= 0.0001) {
+            // Exactly on top of each other: give a random nudge
+            pushX += (Math.random() - 0.5) * 0.1;
+            pushZ += (Math.random() - 0.5) * 0.1;
+          }
+        });
+
+        // Apply separation force (mutate in-place)
+        // Weight the push so it doesn't completely override targeting, but smoothly separates
+        unit.x += pushX * 0.3;
+        unit.z += pushZ * 0.3;
+
+        // --- Target Seeking ---
         let targetX = 0;
         let targetZ = 0;
         let minDist = Infinity;
@@ -435,6 +475,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           const dz = targetZ - unit.z;
           const speed = 2.5;
           const moveStep = (speed * TICK_RATE_MS) / 1000;
+          
           unit.x += (dx / minDist) * moveStep;
           unit.z += (dz / minDist) * moveStep;
         }
