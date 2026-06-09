@@ -36,6 +36,9 @@ export function applyUnitDamage(
 
       if (!targetsBuildingsOnly) {
         enemy.units.forEach((eUnit, uid) => {
+          // Skip spell cards (invulnerable & untargetable)
+          if (SPELL_CARDS.has(eUnit.cardId)) return;
+
           // Melee ground units cannot attack flying units
           if (FLYING_UNITS.has(eUnit.cardId) && !CAN_ATTACK_AIR.has(unit.cardId)) return;
 
@@ -213,6 +216,9 @@ export function processTowerAttacks(
 
       enemy.units.forEach((eUnit, uid) => {
         if (eUnit.hp <= 0) return;
+        // Skip spell cards (invulnerable & untargetable)
+        if (SPELL_CARDS.has(eUnit.cardId)) return;
+
         const d = Math.sqrt(Math.pow(eUnit.x - tx, 2) + Math.pow(eUnit.z - tz, 2));
         if (d < minDist && d <= range) {
           minDist = d;

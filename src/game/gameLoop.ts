@@ -113,6 +113,9 @@ function moveUnits(state: BattleState, tickRateMs: number): void {
       // 1. Scan Unit Lawan (skip if building-only target)
       if (!targetsBuildingsOnly) {
         enemy.units.forEach((eUnit) => {
+          // Skip spell cards (invulnerable & untargetable)
+          if (SPELL_CARDS.has(eUnit.cardId)) return;
+
           // Melee ground units cannot target flying units
           if (FLYING_UNITS.has(eUnit.cardId) && !CAN_ATTACK_AIR.has(unit.cardId)) return;
 
