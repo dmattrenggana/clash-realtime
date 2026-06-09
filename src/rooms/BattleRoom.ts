@@ -296,7 +296,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-game-server-secret": gameServerSecret
+          "Authorization": `Bearer ${supabaseServiceKey}`, // Satisfies Kong Gateway (valid Supabase JWT!)
+          "x-game-server-secret": gameServerSecret // Satisfies our internal M2M security bypass!
         },
         body: JSON.stringify({
           playerTowersAlive,
