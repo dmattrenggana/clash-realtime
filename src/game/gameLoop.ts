@@ -1,4 +1,4 @@
-import { BattleState, Player, DeployedUnit, Tower, SPELL_CARDS, AIR_UNITS, ELIXIR_REGEN_PER_SEC, MAX_DURATION } from "../rooms/schema/BattleState.js";
+import { BattleState, Player, DeployedUnit, Tower, SPELL_CARDS, AIR_UNITS, CAN_ATTACK_AIR, ELIXIR_REGEN_PER_SEC, MAX_DURATION } from "../rooms/schema/BattleState.js";
 import { CARD_RANGE } from "../rooms/schema/BattleState.js";
 import { getTowerCoords, routeThroughBridge } from "./pathfinding.js";
 import { applySeparationForces } from "./physics.js";
@@ -109,6 +109,9 @@ function moveUnits(state: BattleState, tickRateMs: number): void {
       // 1. Scan Unit Lawan (skip if building-only target)
       if (!targetsBuildingsOnly) {
         enemy.units.forEach((eUnit) => {
+          // Melee ground units cannot target flying units
+          if (AIR_UNITS.has(eUnit.cardId) && !CAN_ATTACK_AIR.has(unit.cardId)) return;
+
           const d = Math.sqrt(Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2));
           if (d < minDist) {
             minDist = d;

@@ -37,7 +37,7 @@ export const CARD_RANGE: Record<string, number> = {
 export const CARD_PROJECTILE_SPEED: Record<string, number> = {
   knight: 0, archer: 8.0, giant: 0, wyvern: 6.0, wizard: 6.0,
   goblin: 0, barbarian: 0, healer: 6.0, gunslinger: 10.0,
-  barrel_bomb: 0, meteor: 0, incubus: 0,
+  barrel_bomb: 0, meteor: 0, incubus: 8.0,
 };
 
 // Attack Splash Radius (AoE). If > 0, hits all enemies within this radius.
@@ -67,6 +67,9 @@ export const CARD_SPAWN_COUNT: Record<string, number> = {
 
 /** Set of units that fly. Flying units ignore ground unit collisions. */
 export const AIR_UNITS: Set<string> = new Set(["wyvern", "incubus", "healer"]);
+
+/** Set of units that can attack flying/air targets. Melee ground units cannot hit air. */
+export const CAN_ATTACK_AIR: Set<string> = new Set(["archer", "wyvern", "wizard", "gunslinger", "incubus"]);
 
 /**
  * Server-side spell-card metadata (mirror of client's cards.ts).
