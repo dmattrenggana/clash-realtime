@@ -12,6 +12,10 @@ import {
   CARD_SPAWN_COUNT,
   CARD_COST,
   CARD_DPS,
+  CARD_ATTACK_SPEED,
+  CARD_ATTACK_DAMAGE,
+  CARD_RANGE,
+  CARD_PROJECTILE_SPEED,
   INITIAL_TOWER_HP,
   ELIXIR_REGEN_PER_SEC,
   MAX_DURATION,
@@ -22,6 +26,7 @@ import {
   SPELL_TRIGGER_RADIUS,
   SPELL_DAMAGE,
   AIR_UNITS,
+  Projectile,
 } from "./schema/BattleState.js";
 
 const TICK_RATE_MS = 100; // 10 Hz server tick
@@ -268,6 +273,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
     this.moveUnits();
     this.applyUnitDamage();
+    this.updateProjectiles();
     this.processSpells();
     this.checkWinCondition();
   }
@@ -465,10 +471,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           }
         });
 
-        if (minDist === Infinity) return;
+        if (minDist === Infinity) {
+          unit.action = "idle";
+          unit.targetId = "";
+          return;
+        }
 
         // Insting: Berhenti jika sudah dalam jangkauan serang
-        const attackRange = 2.2;
+        const attackRange = CARD_RANGE[unit.cardId] ?? 2.2;
 
         if (minDist > attackRange) {
           const dx = targetX - unit.x;
@@ -478,6 +488,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           
           unit.x += (dx / minDist) * moveStep;
           unit.z += (dz / minDist) * moveStep;
+          unit.action = "walk";
+          unit.targetId = "";
+        } else {
+          // In range -> stop and face target
+          unit.action = "attack";
+          // unit.targetId is set in applyUnitDamage during the actual attack cycle
         }
       });
     });
@@ -490,19 +506,25 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       if (!enemy) return;
 
       attacker.units.forEach((unit) => {
-        // Spells don't auto-attack; their damage is applied in
-        // processSpells() / detonateSpell().
         if (SPELL_CARDS.has(unit.cardId)) return;
+        if (unit.action !== "attack") return; // Only attack if in 'attack' state set by moveUnits
 
-        let closestTarget: { hp: number } | null = null;
+        // Check cooldown
+        const attackSpeed = CARD_ATTACK_SPEED[unit.cardId] || 1.0;
+        const now = this.state.elapsedSec;
+        if (now - unit.lastAttackTime < attackSpeed) return;
+
+        // Find current closest target to actually execute the hit/projectile
+        let closestTarget: { hp: number; x?: number; z?: number; type?: string; team: number } | null = null;
+        let targetUID = "";
         let minDist = Infinity;
 
-        // Cari target terdekat lagi untuk damage
-        enemy.units.forEach((eUnit) => {
+        enemy.units.forEach((eUnit, uid) => {
           const d = Math.sqrt(Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2));
           if (d < minDist) {
             minDist = d;
             closestTarget = eUnit;
+            targetUID = uid;
           }
         });
 
@@ -513,18 +535,99 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
           if (d < minDist) {
             minDist = d;
-            closestTarget = t;
+            closestTarget = { ...t, x: tx, z: tz } as any;
+            targetUID = t.uid;
           }
         });
 
-        // Insting: Hanya beri damage jika target masih hidup dan dalam jangkauan
-        if (closestTarget && (closestTarget as any).hp > 0 && minDist <= 2.5) {
-          const dps = CARD_DPS[unit.cardId] || 0;
-          const damage = Math.floor(dps * (TICK_RATE_MS / 1000));
-          closestTarget.hp = Math.max(0, closestTarget.hp - damage);
+        const range = CARD_RANGE[unit.cardId] ?? 2.2;
+        if (closestTarget && minDist <= range + 0.5) {
+          unit.lastAttackTime = now;
+          unit.targetId = targetUID;
+
+          const projSpeed = CARD_PROJECTILE_SPEED[unit.cardId] || 0;
+          const damage = CARD_ATTACK_DAMAGE[unit.cardId] || 0;
+
+          if (projSpeed > 0) {
+            // RANGED: Spawn a projectile
+            const pid = randomBytes(8).toString("hex");
+            const projectile = new Projectile();
+            projectile.id = pid;
+            projectile.sourceCardId = unit.cardId;
+            projectile.team = unit.team;
+            projectile.x = unit.x;
+            projectile.z = unit.z;
+            projectile.targetX = (closestTarget as any).x ?? (closestTarget as any).position?.x ?? 0;
+            projectile.targetZ = (closestTarget as any).z ?? (closestTarget as any).position?.z ?? 0;
+            projectile.targetId = targetUID;
+            projectile.speed = projSpeed;
+            projectile.damage = damage;
+
+            this.state.projectiles.set(pid, projectile);
+          } else {
+            // MELEE: Apply damage instantly
+            // We need to find the ACTUAL tower object in the state if target is a tower
+            const actualTower = enemy.towers.find(t => t.uid === targetUID);
+            const actualUnit = enemy.units.get(targetUID);
+
+            if (actualUnit) {
+              actualUnit.hp = Math.max(0, actualUnit.hp - damage);
+            } else if (actualTower) {
+              actualTower.hp = Math.max(0, actualTower.hp - damage);
+            }
+          }
         }
       });
     });
+  }
+
+  private updateProjectiles() {
+    const dt = TICK_RATE_MS / 1000;
+    const toRemove: string[] = [];
+
+    this.state.projectiles.forEach((p, pid) => {
+      // 1. Update target position if target is a unit (towers are static)
+      let currentTargetX = p.targetX;
+      let currentTargetZ = p.targetZ;
+
+      const playerList = Array.from(this.state.players.values());
+      const targetUnit = playerList.flatMap(pl => Array.from(pl.units.entries()))
+                                   .find(([uid]) => uid === p.targetId)?.[1];
+      
+      if (targetUnit) {
+        currentTargetX = targetUnit.x;
+        currentTargetZ = targetUnit.z;
+        p.targetX = currentTargetX;
+        p.targetZ = currentTargetZ;
+      }
+
+      // 2. Move towards target
+      const dx = currentTargetX - p.x;
+      const dz = currentTargetZ - p.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      const moveStep = p.speed * dt;
+
+      if (dist <= moveStep) {
+        // IMPACT
+        const enemy = playerList.find(pl => pl.team !== p.team);
+        if (enemy) {
+          const actualUnit = enemy.units.get(p.targetId);
+          const actualTower = enemy.towers.find(t => t.uid === p.targetId);
+
+          if (actualUnit) {
+            actualUnit.hp = Math.max(0, actualUnit.hp - p.damage);
+          } else if (actualTower) {
+            actualTower.hp = Math.max(0, actualTower.hp - p.damage);
+          }
+        }
+        toRemove.push(pid);
+      } else {
+        p.x += (dx / dist) * moveStep;
+        p.z += (dz / dist) * moveStep;
+      }
+    });
+
+    toRemove.forEach(pid => this.state.projectiles.delete(pid));
   }
 
   private checkWinCondition() {
