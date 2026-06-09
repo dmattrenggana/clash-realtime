@@ -10,7 +10,8 @@ import { getTowerCoords } from "./pathfinding.js";
 export function applyUnitDamage(
   players: MapSchemaPlayerLike,
   elapsedSec: number,
-  spawnProjectile: (pid: string, p: Projectile) => void
+  spawnProjectile: (pid: string, p: Projectile) => void,
+  onDamageDealt: (attackerTeam: number, damage: number) => void
 ): void {
   const playerList = Array.from(players.values());
   playerList.forEach((attacker) => {
@@ -88,23 +89,40 @@ export function applyUnitDamage(
           spawnProjectile(pid, projectile);
         } else {
           // MELEE: Apply damage
+          let dealt = 0;
           if (splash > 0) {
             // Melee AoE (Barbarian)
             enemy.units.forEach((eUnit) => {
               const d = Math.sqrt(Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2));
-              if (d <= splash) eUnit.hp = Math.max(0, eUnit.hp - damage);
+              if (d <= splash) {
+                const actualDmg = Math.min(eUnit.hp, damage);
+                eUnit.hp = Math.max(0, eUnit.hp - damage);
+                dealt += actualDmg;
+              }
             });
             enemy.towers.forEach((t, idx) => {
               const { x: tx, z: tz } = getTowerCoords(t, enemy.team, idx);
               const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
-              if (d <= splash) t.hp = Math.max(0, t.hp - damage);
+              if (d <= splash) {
+                const actualDmg = Math.min(t.hp, damage);
+                t.hp = Math.max(0, t.hp - damage);
+                dealt += actualDmg;
+              }
             });
           } else {
             // Single target
             const actualTower = enemy.towers.find(t => t.uid === (closestTarget as any).uid);
             const actualUnit = enemy.units.get((closestTarget as any).uid);
-            if (actualUnit) actualUnit.hp = Math.max(0, actualUnit.hp - damage);
-            else if (actualTower) actualTower.hp = Math.max(0, actualTower.hp - damage);
+            if (actualUnit) {
+              dealt = Math.min(actualUnit.hp, damage);
+              actualUnit.hp = Math.max(0, actualUnit.hp - damage);
+            } else if (actualTower) {
+              dealt = Math.min(actualTower.hp, damage);
+              actualTower.hp = Math.max(0, actualTower.hp - damage);
+            }
+          }
+          if (dealt > 0) {
+            onDamageDealt(unit.team, dealt);
           }
         }
       }
@@ -119,7 +137,8 @@ export function applyUnitDamage(
 export function updateProjectiles(
   players: MapSchemaPlayerLike,
   projectiles: MapSchemaProjectileLike,
-  tickRateMs: number
+  tickRateMs: number,
+  onDamageDealt: (attackerTeam: number, damage: number) => void
 ): void {
   const dt = tickRateMs / 1000;
   const toRemove: string[] = [];
@@ -147,23 +166,40 @@ export function updateProjectiles(
       // IMPACT
       const enemy = playerList.find(pl => pl.team !== p.team);
       if (enemy) {
+        let dealt = 0;
         if (p.splashRadius > 0) {
           // AoE Splash
           enemy.units.forEach((eUnit) => {
             const d = Math.sqrt(Math.pow(eUnit.x - p.targetX, 2) + Math.pow(eUnit.z - p.targetZ, 2));
-            if (d <= p.splashRadius) eUnit.hp = Math.max(0, eUnit.hp - p.damage);
+            if (d <= p.splashRadius) {
+              const actualDmg = Math.min(eUnit.hp, p.damage);
+              eUnit.hp = Math.max(0, eUnit.hp - p.damage);
+              dealt += actualDmg;
+            }
           });
           enemy.towers.forEach((t, idx) => {
             const { x: tx, z: tz } = getTowerCoords(t, enemy.team, idx);
             const d = Math.sqrt(Math.pow(tx - p.targetX, 2) + Math.pow(tz - p.targetZ, 2));
-            if (d <= p.splashRadius) t.hp = Math.max(0, t.hp - p.damage);
+            if (d <= p.splashRadius) {
+              const actualDmg = Math.min(t.hp, p.damage);
+              t.hp = Math.max(0, t.hp - p.damage);
+              dealt += actualDmg;
+            }
           });
         } else {
           // Single target
           const actualUnit = enemy.units.get(p.targetId);
           const actualTower = enemy.towers.find(t => t.uid === p.targetId);
-          if (actualUnit) actualUnit.hp = Math.max(0, actualUnit.hp - p.damage);
-          else if (actualTower) actualTower.hp = Math.max(0, actualTower.hp - p.damage);
+          if (actualUnit) {
+            dealt = Math.min(actualUnit.hp, p.damage);
+            actualUnit.hp = Math.max(0, actualUnit.hp - p.damage);
+          } else if (actualTower) {
+            dealt = Math.min(actualTower.hp, p.damage);
+            actualTower.hp = Math.max(0, actualTower.hp - p.damage);
+          }
+        }
+        if (dealt > 0) {
+          onDamageDealt(p.team, dealt);
         }
       }
       toRemove.push(pid);

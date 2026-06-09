@@ -66,7 +66,8 @@ export function processHealerAI(
  */
 export function processSpells(
   players: MapSchemaPlayerLike,
-  elapsedSec: number
+  elapsedSec: number,
+  onDamageDealt: (attackerTeam: number, damage: number) => void
 ): void {
   const playerList = Array.from(players.values());
   if (playerList.length === 0) return;
@@ -105,7 +106,7 @@ export function processSpells(
     toDetonate.forEach((id) => {
       const unit = player.units.get(id);
       if (!unit) return;
-      detonateSpell(player, enemy, unit);
+      detonateSpell(player, enemy, unit, onDamageDealt);
       unit.hp = 0; // Marks HP=0 to trigger client death/explosion animation
     });
   });
@@ -117,13 +118,15 @@ export function processSpells(
 export function detonateSpell(
   _owner: Player,
   enemy: Player | undefined,
-  spell: DeployedUnit
+  spell: DeployedUnit,
+  onDamageDealt: (attackerTeam: number, damage: number) => void
 ): void {
   if (!enemy) return;
   const radius = SPELL_SPLASH_RADIUS[spell.cardId] ?? 3.0;
   const damage = SPELL_DAMAGE[spell.cardId] ?? 0;
   if (damage <= 0) return;
 
+  let dealt = 0;
   // Damage enemy units in radius
   const toKillUnits: string[] = [];
   enemy.units.forEach((eUnit, id) => {
@@ -131,7 +134,9 @@ export function detonateSpell(
       Math.pow(eUnit.x - spell.x, 2) + Math.pow(eUnit.z - spell.z, 2)
     );
     if (d <= radius) {
+      const actualDmg = Math.min(eUnit.hp, damage);
       eUnit.hp = Math.max(0, eUnit.hp - damage);
+      dealt += actualDmg;
       if (eUnit.hp <= 0) toKillUnits.push(id);
     }
   });
@@ -145,9 +150,15 @@ export function detonateSpell(
       Math.pow(tx - spell.x, 2) + Math.pow(tz - spell.z, 2)
     );
     if (d <= radius) {
+      const actualDmg = Math.min(t.hp, damage);
       t.hp = Math.max(0, t.hp - damage);
+      dealt += actualDmg;
     }
   });
+
+  if (dealt > 0) {
+    onDamageDealt(_owner.team, dealt);
+  }
 }
 
 interface MapSchemaPlayerLike {

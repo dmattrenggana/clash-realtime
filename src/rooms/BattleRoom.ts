@@ -74,6 +74,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   // Empty-room watchdog: fires EMPTY_ROOM_TIMEOUT_MS after onCreate to
   // dispose the room if the second player never arrives.
   private emptyTimeout: Delayed | null = null;
+  private cardsDeployed = new Map<string, number>(); // walletAddress -> count
+  private totalDamageDealt = new Map<string, number>(); // walletAddress -> amount
 
   static async onAuth(token: string, options: any, context: any) {
     // Read env here (not at module load) — dotenv loads .env.production
@@ -253,8 +255,78 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.disconnect();
   }
 
+  private trackDamage(attackerTeam: number, damage: number) {
+    const player = Array.from(this.state.players.values()).find(p => p.team === attackerTeam);
+    if (player) {
+      const current = this.totalDamageDealt.get(player.walletAddress) || 0;
+      this.totalDamageDealt.set(player.walletAddress, current + damage);
+    }
+  }
+
   private tick() {
-    tickGame(this.state, this.gameStartTime, TICK_RATE_MS, (winner) => this.endMatch());
+    tickGame(
+      this.state,
+      this.gameStartTime,
+      TICK_RATE_MS,
+      (attackerTeam, damage) => this.trackDamage(attackerTeam, damage),
+      (winner) => this.endMatch()
+    );
+  }
+
+  private async recordMatchToServerSide(player: Player, enemy: Player, duration: number) {
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const gameServerSecret = process.env.GAME_SERVER_SECRET;
+
+    if (!supabaseUrl || !supabaseServiceKey || !gameServerSecret) {
+      console.warn("[BattleRoom] Supabase integration skipped: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, or GAME_SERVER_SECRET is not configured on the server.");
+      return;
+    }
+
+    const playerWallet = player.walletAddress;
+    const playerTowersAlive = player.towers.filter(t => t.hp > 0).length;
+    const enemyTowersAlive = enemy.towers.filter(t => t.hp > 0).length;
+    const cardsDeployed = this.cardsDeployed.get(player.walletAddress) || 0;
+    const totalDamageDealt = Math.floor(this.totalDamageDealt.get(player.walletAddress) || 0);
+
+    console.log(`[BattleRoom] Attempting to record match server-side for wallet: ${playerWallet}...`);
+
+    try {
+      const response = await fetch(`${supabaseUrl}/functions/v1/record-match`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${gameServerSecret}`
+        },
+        body: JSON.stringify({
+          playerTowersAlive,
+          enemyTowersAlive,
+          matchDurationSec: duration,
+          cardsDeployed,
+          totalDamageDealt,
+          playerWallet
+        })
+      });
+
+      const resBody = await response.json().catch(() => ({}));
+      if (response.ok && resBody.success && resBody.data?.match_id) {
+        const matchId = resBody.data.match_id;
+        console.log(`[BattleRoom] Match recorded successfully for ${playerWallet}. Match ID: ${matchId}`);
+        
+        // Find the client associated with this wallet to send them their matchId privately
+        const client = this.clients.find(c => {
+          const p = this.state.players.get(c.sessionId);
+          return p && p.walletAddress.toLowerCase() === playerWallet.toLowerCase();
+        });
+        if (client) {
+          client.send("matchId", { matchId });
+        }
+      } else {
+        console.error(`[BattleRoom] Match recording failed for ${playerWallet}:`, resBody.error || "Unknown error");
+      }
+    } catch (err) {
+      console.error(`[BattleRoom] Match recording exception for ${playerWallet}:`, (err as Error).message);
+    }
   }
 
   private endMatch() {
@@ -275,6 +347,15 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         towersAlive: p.towers.filter((t: Tower) => t.hp > 0).length,
       })),
     });
+
+    // Record the match results to Supabase server-side for both players
+    const playerList = Array.from(this.state.players.values());
+    if (playerList.length >= 2) {
+      const p0 = playerList[0];
+      const p1 = playerList[1];
+      this.recordMatchToServerSide(p0, p1, this.state.elapsedSec);
+      this.recordMatchToServerSide(p1, p0, this.state.elapsedSec);
+    }
   }
 
   messages = {
@@ -316,6 +397,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
       const spawnCount = CARD_SPAWN_COUNT[payload.cardId] || 1;
       player.elixir -= cost;
+
+      // Track cards deployed
+      const currentCount = this.cardsDeployed.get(player.walletAddress) || 0;
+      this.cardsDeployed.set(player.walletAddress, currentCount + 1);
 
       for (let i = 0; i < spawnCount; i++) {
         const unit = new DeployedUnit();

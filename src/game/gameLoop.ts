@@ -13,6 +13,7 @@ export function tickGame(
   state: BattleState,
   gameStartTime: number,
   tickRateMs: number,
+  onDamageDealt: (attackerTeam: number, damage: number) => void,
   onMatchEnded: (winnerTeam: string) => void
 ): void {
   if (state.status !== "playing") return;
@@ -40,7 +41,8 @@ export function tickGame(
   applyUnitDamage(
     state.players,
     state.elapsedSec,
-    (pid, p) => state.projectiles.set(pid, p)
+    (pid, p) => state.projectiles.set(pid, p),
+    onDamageDealt
   );
 
   // 5. Combat: Process Automated Tower Attacks (cannonballs)
@@ -51,10 +53,10 @@ export function tickGame(
   );
 
   // 6. Combat: Update flying projectiles pathing and impact checks
-  updateProjectiles(state.players, state.projectiles, tickRateMs);
+  updateProjectiles(state.players, state.projectiles, tickRateMs, onDamageDealt);
 
   // 7. Spells Detonation checking
-  processSpells(state.players, state.elapsedSec);
+  processSpells(state.players, state.elapsedSec, onDamageDealt);
 
   // 8. Evaluate Win Conditions (Crowns destroyed or Overtime timeout)
   checkWinCondition(state, onMatchEnded);
