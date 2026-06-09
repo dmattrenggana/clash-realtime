@@ -3,15 +3,15 @@ import { Tower } from "../rooms/schema/BattleState.js";
 /**
  * Maps a tower to its absolute coordinate system used in the 3D battlefield.
  * team 0 -> player side: z > 0; team 1 -> enemy side: z < 0.
+ * Index in player.towers array uniquely determines its left/right side:
+ *   - Index 0: Left Princess Tower (X = -6)
+ *   - Index 1: King Tower (X = 0)
+ *   - Index 2: Right Princess Tower (X = 6)
  */
-export function getTowerCoords(tower: Tower, towerTeam: number, attackerX: number): { x: number; z: number } {
-  if (tower.type === "king") {
-    return { x: 0, z: towerTeam === 0 ? 13 : -13 };
-  } else {
-    // Princess tower: determine left or right based on the attacker's X position to target the nearest one
-    const tx = attackerX > 0 ? 6 : -6;
-    return { x: tx, z: towerTeam === 0 ? 10 : -10 };
-  }
+export function getTowerCoords(tower: Tower, towerTeam: number, idx: number): { x: number; z: number } {
+  const tx = idx === 1 ? 0 : (idx === 0 ? -6 : 6);
+  const tz = towerTeam === 0 ? (tower.type === "king" ? 13 : 10) : (tower.type === "king" ? -13 : -10);
+  return { x: tx, z: tz };
 }
 
 /**

@@ -44,9 +44,9 @@ export function applyUnitDamage(
         });
       }
 
-      enemy.towers.forEach((t: Tower) => {
+      enemy.towers.forEach((t: Tower, idx: number) => {
         if (t.hp <= 0) return;
-        const { x: tx, z: tz } = getTowerCoords(t, enemy.team, unit.x);
+        const { x: tx, z: tz } = getTowerCoords(t, enemy.team, idx);
         const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
         if (d < minDist) {
           minDist = d;
@@ -88,8 +88,8 @@ export function applyUnitDamage(
               const d = Math.sqrt(Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2));
               if (d <= splash) eUnit.hp = Math.max(0, eUnit.hp - damage);
             });
-            enemy.towers.forEach((t) => {
-              const { x: tx, z: tz } = getTowerCoords(t, enemy.team, unit.x);
+            enemy.towers.forEach((t, idx) => {
+              const { x: tx, z: tz } = getTowerCoords(t, enemy.team, idx);
               const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
               if (d <= splash) t.hp = Math.max(0, t.hp - damage);
             });
@@ -147,8 +147,8 @@ export function updateProjectiles(
             const d = Math.sqrt(Math.pow(eUnit.x - p.targetX, 2) + Math.pow(eUnit.z - p.targetZ, 2));
             if (d <= p.splashRadius) eUnit.hp = Math.max(0, eUnit.hp - p.damage);
           });
-          enemy.towers.forEach((t) => {
-            const { x: tx, z: tz } = getTowerCoords(t, enemy.team, p.targetX);
+          enemy.towers.forEach((t, idx) => {
+            const { x: tx, z: tz } = getTowerCoords(t, enemy.team, idx);
             const d = Math.sqrt(Math.pow(tx - p.targetX, 2) + Math.pow(tz - p.targetZ, 2));
             if (d <= p.splashRadius) t.hp = Math.max(0, t.hp - p.damage);
           });

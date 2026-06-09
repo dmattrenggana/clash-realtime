@@ -138,9 +138,9 @@ export function detonateSpell(
   toKillUnits.forEach((id) => enemy.units.delete(id));
 
   // Damage enemy towers in radius
-  enemy.towers.forEach((t) => {
+  enemy.towers.forEach((t, idx) => {
     if (t.hp <= 0) return;
-    const { x: tx, z: tz } = getTowerCoords(t, enemy.team, spell.x);
+    const { x: tx, z: tz } = getTowerCoords(t, enemy.team, idx);
     const d = Math.sqrt(
       Math.pow(tx - spell.x, 2) + Math.pow(tz - spell.z, 2)
     );

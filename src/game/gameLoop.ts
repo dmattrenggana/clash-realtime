@@ -119,9 +119,9 @@ function moveUnits(state: BattleState, tickRateMs: number): void {
       }
 
       // 2. Scan Tower Lawan
-      enemy.towers.forEach((t: Tower) => {
+      enemy.towers.forEach((t: Tower, idx: number) => {
         if (t.hp <= 0) return;
-        const { x: tx, z: tz } = getTowerCoords(t, enemy.team, unit.x);
+        const { x: tx, z: tz } = getTowerCoords(t, enemy.team, idx);
         const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
         if (d < minDist) {
           minDist = d;
