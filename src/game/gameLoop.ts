@@ -1,4 +1,4 @@
-import { BattleState, Player, DeployedUnit, Tower, SPELL_CARDS, FLYING_UNITS, CAN_ATTACK_AIR, ELIXIR_REGEN_PER_SEC, MAX_DURATION } from "../rooms/schema/BattleState.js";
+import { BattleState, Player, DeployedUnit, Tower, SPELL_CARDS, FLYING_UNITS, CAN_ATTACK_AIR, CARD_PROJECTILE_SPEED, ELIXIR_REGEN_PER_SEC, MAX_DURATION } from "../rooms/schema/BattleState.js";
 import { CARD_RANGE } from "../rooms/schema/BattleState.js";
 import { getTowerCoords, routeThroughBridge } from "./pathfinding.js";
 import { applySeparationForces, applyRiverConstraint, applyTowerCollisions } from "./physics.js";
@@ -155,17 +155,10 @@ function moveUnits(state: BattleState, tickRateMs: number): void {
           // Set targetId to follow them
           unit.targetId = closestAllyUID;
         } else {
-          // 3. Fallback: No allies exist, walk towards closest enemy tower!
-          enemy.towers.forEach((t: Tower, idx: number) => {
-            if (t.hp <= 0) return;
-            const { x: tx, z: tz } = getTowerCoords(t, enemy.team, idx);
-            const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
-            if (d < minDist) {
-              minDist = d;
-              targetX = tx;
-              targetZ = tz;
-            }
-          });
+          // No allies exist: stay idle and do not move!
+          unit.action = "idle";
+          unit.targetId = "";
+          return;
         }
       } else {
         // --- Standard Unit Targeting (Knight, Archer, Giant, etc.) ---
@@ -216,7 +209,16 @@ function moveUnits(state: BattleState, tickRateMs: number): void {
       );
 
       // Insting: Berhenti jika sudah dalam jangkauan serang
-      const attackRange = CARD_RANGE[unit.cardId] ?? 2.2;
+      let attackRange = CARD_RANGE[unit.cardId] ?? 2.2;
+
+      // Tower attack range adjustment for melee units (anti-get-stuck fix!)
+      const isMelee = (CARD_PROJECTILE_SPEED[unit.cardId] || 0) === 0;
+      const isTargetingTower = Math.abs(targetZ) === 10 || Math.abs(targetZ) === 13;
+      if (isMelee && isTargetingTower) {
+        const isKing = Math.abs(targetZ) === 13;
+        const towerRadius = isKing ? 1.8 : 1.4;
+        attackRange = towerRadius + 0.3; // stop exactly 0.3 units from the tower's boundary!
+      }
 
       if (minDist > attackRange) {
         const dx = moveTargetX - unit.x;

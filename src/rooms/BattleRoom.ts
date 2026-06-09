@@ -308,7 +308,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         })
       });
 
-      const resBody = await response.json().catch(() => ({}));
+      const resText = await response.text();
+      let resBody: any = {};
+      try {
+        resBody = JSON.parse(resText);
+      } catch {
+        // Not a JSON response
+      }
+
       if (response.ok && resBody.success && resBody.data?.match_id) {
         const matchId = resBody.data.match_id;
         console.log(`[BattleRoom] Match recorded successfully for ${playerWallet}. Match ID: ${matchId}`);
@@ -322,7 +329,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           client.send("matchId", { matchId });
         }
       } else {
-        console.error(`[BattleRoom] Match recording failed for ${playerWallet}:`, resBody.error || "Unknown error");
+        const errMsg = resBody.error || resText || "Unknown error";
+        console.error(`[BattleRoom] Match recording failed for ${playerWallet} [Status ${response.status}]:`, errMsg);
       }
     } catch (err) {
       console.error(`[BattleRoom] Match recording exception for ${playerWallet}:`, (err as Error).message);

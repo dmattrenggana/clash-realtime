@@ -61,7 +61,17 @@ export function applyUnitDamage(
         }
       });
 
-      const range = CARD_RANGE[unit.cardId] ?? 2.2;
+      let range = CARD_RANGE[unit.cardId] ?? 2.2;
+      
+      // Tower attack range adjustment for melee units (anti-get-stuck fix!)
+      const isMelee = (CARD_PROJECTILE_SPEED[unit.cardId] || 0) === 0;
+      const isTargetingTower = closestTarget && (Math.abs((closestTarget as any).z) === 10 || Math.abs((closestTarget as any).z) === 13);
+      if (isMelee && isTargetingTower) {
+        const isKing = Math.abs((closestTarget as any).z) === 13;
+        const towerRadius = isKing ? 1.8 : 1.4;
+        range = towerRadius + 0.3;
+      }
+
       if (closestTarget && minDist <= range + 0.5) {
         unit.lastAttackTime = now;
         unit.targetId = (closestTarget as any).uid;
