@@ -173,18 +173,25 @@ function moveUnits(state: BattleState, tickRateMs: number): void {
 
 /**
  * Evaluates the win/loss status of the game state.
+ * Win conditions:
+ *   1. Instantly win if the opponent's King Tower is destroyed (HP <= 0).
+ *   2. If the overtime timer expires (MAX_DURATION), player with the most remaining towers wins.
  */
 function checkWinCondition(state: BattleState, onMatchEnded: (winnerTeam: string) => void): void {
   const players: Player[] = Array.from(state.players.values());
   for (const player of players) {
-    const living = player.towers.filter((t: Tower) => t.hp > 0).length;
-    if (living === 0) {
+    const kingTower = player.towers.find((t: Tower) => t.type === "king");
+    
+    // If a player's King Tower is destroyed, they lose immediately!
+    if (kingTower && kingTower.hp <= 0) {
       const winner = players.find((p) => p.team !== player.team);
       state.winnerTeam = winner ? String(winner.team) : "draw";
       onMatchEnded(state.winnerTeam);
       return;
     }
   }
+
+  // Overtime tiebreaker if MAX_DURATION is reached
   if (state.elapsedSec >= MAX_DURATION) {
     const p0 = players.find((p) => p.team === 0)?.towers.filter((t: Tower) => t.hp > 0).length || 0;
     const p1 = players.find((p) => p.team === 1)?.towers.filter((t: Tower) => t.hp > 0).length || 0;
