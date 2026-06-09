@@ -15,6 +15,12 @@ import {
   INITIAL_TOWER_HP,
   ELIXIR_REGEN_PER_SEC,
   MAX_DURATION,
+  SPELL_CARDS,
+  SPELL_SPLASH_RADIUS,
+  SPELL_TRIGGER,
+  SPELL_DETONATE_AFTER_MS,
+  SPELL_TRIGGER_RADIUS,
+  SPELL_DAMAGE,
 } from "./schema/BattleState.js";
 
 const TICK_RATE_MS = 100; // 10 Hz server tick
@@ -261,7 +267,114 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
     this.moveUnits();
     this.applyUnitDamage();
+    this.processSpells();
     this.checkWinCondition();
+  }
+
+  /**
+   * Spell processing (static AoE):
+   *  - meteor: detonates after a fixed timer (SPELL_DETONATE_AFTER_MS).
+   *  - barrel_bomb: detonates when an enemy enters SPELL_TRIGGER_RADIUS.
+   *  On detonation, deal SPELL_DAMAGE to all enemy units + enemy towers
+   *  within SPELL_SPLASH_RADIUS, then DELETE the unit from the MapSchema
+   *  so the client stops rendering it. Spells never move, never auto-
+   *  target, never auto-attack — that logic lives in moveUnits /
+   *  applyUnitDamage which explicitly skip SPELL_CARDS.
+   */
+  private processSpells() {
+    const playerList = Array.from(this.state.players.values());
+    if (playerList.length === 0) return;
+
+    playerList.forEach((player) => {
+      const enemy = playerList.find((p) => p.team !== player.team);
+      // We must collect IDs first, then delete after the forEach to
+      // avoid mutating the Map while iterating it (Colyseus MapSchema
+      // iterators are not safe for in-place deletion).
+      const toDetonate: string[] = [];
+      const now = Date.now();
+
+      player.units.forEach((unit, id) => {
+        if (!SPELL_CARDS.has(unit.cardId)) return;
+        if (unit.hp <= 0) return; // already detonated, will be cleaned up below
+
+        const trigger = SPELL_TRIGGER[unit.cardId];
+        if (trigger === "timer") {
+          // Detonate if `detonateAfterMs` has elapsed since spawn
+          const spawnedAt = unit.spawnTime * 1000; // spawnTime is in seconds
+          // We use the gameStartTime-based clock for relative timing;
+          // simpler: just compare elapsedSec - spawnTime
+          const ageSec = this.state.elapsedSec - unit.spawnTime;
+          const ageMs = ageSec * 1000;
+          if (ageMs >= (SPELL_DETONATE_AFTER_MS[unit.cardId] ?? 800)) {
+            toDetonate.push(id);
+          }
+        } else if (trigger === "proximity") {
+          // Detonate if any ENEMY unit is within trigger radius
+          if (!enemy) return;
+          const triggerR = SPELL_TRIGGER_RADIUS[unit.cardId] ?? 2.0;
+          let close = false;
+          enemy.units.forEach((eUnit) => {
+            if (close) return;
+            const d = Math.sqrt(
+              Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2)
+            );
+            if (d <= triggerR) close = true;
+          });
+          if (close) toDetonate.push(id);
+        }
+      });
+
+      // Now actually detonate them
+      toDetonate.forEach((id) => {
+        const unit = player.units.get(id);
+        if (!unit) return;
+        this.detonateSpell(player, enemy, unit);
+        player.units.delete(id); // despawn (drops from client mirror)
+      });
+    });
+  }
+
+  /**
+   * Apply AoE damage from a spell to all enemy units + enemy towers
+   * within SPELL_SPLASH_RADIUS of the spell's position. Damage is
+   * subtracted from each target's HP, floored at 0. Tower HP of 0
+   * is recognized by checkWinCondition as "destroyed".
+   */
+  private detonateSpell(
+    _owner: Player,
+    enemy: Player | undefined,
+    spell: DeployedUnit
+  ) {
+    if (!enemy) return;
+    const radius = SPELL_SPLASH_RADIUS[spell.cardId] ?? 3.0;
+    const damage = SPELL_DAMAGE[spell.cardId] ?? 0;
+    if (damage <= 0) return;
+
+    // Damage enemy units in radius
+    const toKillUnits: string[] = [];
+    enemy.units.forEach((eUnit, id) => {
+      const d = Math.sqrt(
+        Math.pow(eUnit.x - spell.x, 2) + Math.pow(eUnit.z - spell.z, 2)
+      );
+      if (d <= radius) {
+        eUnit.hp = Math.max(0, eUnit.hp - damage);
+        if (eUnit.hp <= 0) toKillUnits.push(id);
+      }
+    });
+    toKillUnits.forEach((id) => enemy.units.delete(id));
+
+    // Damage enemy towers in radius
+    enemy.towers.forEach((t) => {
+      if (t.hp <= 0) return;
+      const tx = t.type === "king" ? 0 : (spell.x > 0 ? 6 : -6);
+      const tz = enemy.team === 0 ? 14.5 : -14.5;
+      const d = Math.sqrt(
+        Math.pow(tx - spell.x, 2) + Math.pow(tz - spell.z, 2)
+      );
+      if (d <= radius) {
+        t.hp = Math.max(0, t.hp - damage);
+      }
+    });
   }
 
   private moveUnits() {
@@ -278,6 +391,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       });
 
       player.units.forEach((unit) => {
+        // Spells (meteor / barrel_bomb) are STATIC AoE effects. They
+        // never move, never seek a target — that logic is handled in
+        // processSpells() / detonateSpell(). Skip them here so the
+        // troop pathfinding branch can't pull them around.
+        if (SPELL_CARDS.has(unit.cardId)) return;
+
         let targetX = 0;
         let targetZ = 0;
         let minDist = Infinity;
@@ -330,6 +449,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       if (!enemy) return;
 
       attacker.units.forEach((unit) => {
+        // Spells don't auto-attack; their damage is applied in
+        // processSpells() / detonateSpell().
+        if (SPELL_CARDS.has(unit.cardId)) return;
+
         let closestTarget: { hp: number } | null = null;
         let minDist = Infinity;
 

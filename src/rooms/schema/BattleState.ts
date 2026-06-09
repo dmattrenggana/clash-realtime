@@ -29,6 +29,50 @@ export const CARD_SPAWN_COUNT: Record<string, number> = {
   barrel_bomb: 1, meteor: 1, incubus: 3,
 };
 
+/**
+ * Server-side spell-card metadata (mirror of client's cards.ts).
+ * Spells are STATIC AoE effects. They never move, never auto-target,
+ * never auto-attack. The server enforces this by:
+ *   1. Skipping spell units in the troop movement tick.
+ *   2. Skipping spell units in the troop attack tick.
+ *   3. Running a separate AoE detonation step for spells (timer for
+ *      meteor, proximity trigger for barrel_bomb).
+ *   4. Deleting the unit from the MapSchema once it explodes so the
+ *      client stops rendering it.
+ */
+export const SPELL_CARDS: Set<string> = new Set(["meteor", "barrel_bomb"]);
+
+/** AoE explosion radius (units). */
+export const SPELL_SPLASH_RADIUS: Record<string, number> = {
+  meteor: 3.0,
+  barrel_bomb: 3.0,
+};
+
+/** Detonation trigger mode. */
+export type SpellTrigger = "timer" | "proximity";
+
+export const SPELL_TRIGGER: Record<string, SpellTrigger> = {
+  meteor: "timer",
+  barrel_bomb: "proximity",
+};
+
+/** Time-to-detonate (ms) for 'timer' spells. */
+export const SPELL_DETONATE_AFTER_MS: Record<string, number> = {
+  meteor: 800,
+};
+
+/** Proximity-trigger radius (units) for 'proximity' spells. */
+export const SPELL_TRIGGER_RADIUS: Record<string, number> = {
+  barrel_bomb: 2.0,
+};
+
+/** Per-tick damage value (CARD_DPS[cardId] is per-second; here we
+ *  apply the full cardDPS once on detonation). */
+export const SPELL_DAMAGE: Record<string, number> = {
+  meteor: 70,
+  barrel_bomb: 55,
+};
+
 // === Schemas ===
 
 export class Tower extends Schema {
