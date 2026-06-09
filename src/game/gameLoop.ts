@@ -1,7 +1,7 @@
 import { BattleState, Player, DeployedUnit, Tower, SPELL_CARDS, FLYING_UNITS, CAN_ATTACK_AIR, ELIXIR_REGEN_PER_SEC, MAX_DURATION } from "../rooms/schema/BattleState.js";
 import { CARD_RANGE } from "../rooms/schema/BattleState.js";
 import { getTowerCoords, routeThroughBridge } from "./pathfinding.js";
-import { applySeparationForces } from "./physics.js";
+import { applySeparationForces, applyRiverConstraint, applyTowerCollisions } from "./physics.js";
 import { processHealerAI, processSpells } from "./behaviors.js";
 import { applyUnitDamage, updateProjectiles, processTowerAttacks } from "./combat.js";
 
@@ -97,6 +97,10 @@ function moveUnits(state: BattleState, tickRateMs: number): void {
 
       // --- Separation / Collision Avoidance ---
       applySeparationForces(unit, isUnitAir, allAliveTroops);
+
+      // --- River & Tower Physical Boundaries ---
+      applyRiverConstraint(unit, isUnitAir);
+      applyTowerCollisions(unit, isUnitAir, state.players);
 
       // --- Target Seeking ---
       let targetX = 0;
