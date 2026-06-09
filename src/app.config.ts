@@ -28,6 +28,32 @@ const server = defineServer({
      * Read more: https://expressjs.com/en/starter/basic-routing.html
      */
     express: (app) => {
+        // --- MANUAL CORS MIDDLEWARE ---
+        // Fix for: "Access to fetch at ... has been blocked by CORS policy"
+        app.use((req, res, next) => {
+            const origin = req.headers.origin;
+            const allowedOrigins = [
+                "https://clashonchain.xyz",
+                "https://www.clashonchain.xyz",
+                "http://localhost:5173", // For local dev
+                "http://localhost:4173"
+            ];
+
+            if (origin && allowedOrigins.includes(origin)) {
+                res.setHeader("Access-Control-Allow-Origin", origin);
+            }
+
+            res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+            res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-colyseus-auth");
+            res.setHeader("Access-Control-Allow-Credentials", "true");
+
+            // Handle preflight (OPTIONS)
+            if (req.method === "OPTIONS") {
+                return res.sendStatus(204);
+            }
+            next();
+        });
+
         /**
          * Use @colyseus/monitor
          * It is recommended to protect this route with a password
