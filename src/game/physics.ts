@@ -36,10 +36,16 @@ export function applySeparationForces(
     }
   });
 
-  // Apply separation force (mutate in-place)
-  // Weight the push so it doesn't completely override targeting, but smoothly separates
-  unit.x += pushX * 0.3;
-  unit.z += pushZ * 0.3;
+  // Apply damped separation force with a stable maximum cap per tick
+  const pushLen = Math.sqrt(pushX * pushX + pushZ * pushZ);
+  const maxPushPerTick = 0.06; // Highly stable max displacement per 100ms tick to prevent jitter
+  if (pushLen > maxPushPerTick) {
+    pushX = (pushX / pushLen) * maxPushPerTick;
+    pushZ = (pushZ / pushLen) * maxPushPerTick;
+  }
+
+  unit.x += pushX;
+  unit.z += pushZ;
 }
 
 /**

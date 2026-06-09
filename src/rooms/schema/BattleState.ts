@@ -28,8 +28,8 @@ export const CARD_ATTACK_DAMAGE: Record<string, number> = {
 
 // Attack Range in units
 export const CARD_RANGE: Record<string, number> = {
-  knight: 1.0, archer: 4.5, giant: 1.2, wyvern: 1.5, wizard: 4.0,
-  goblin: 1.0, barbarian: 1.0, healer: 3.5, gunslinger: 5.0,
+  knight: 1.4, archer: 4.5, giant: 1.5, wyvern: 1.5, wizard: 4.0,
+  goblin: 1.3, barbarian: 1.4, healer: 3.5, gunslinger: 5.0,
   barrel_bomb: 0, meteor: 0, incubus: 1.2,
 };
 
