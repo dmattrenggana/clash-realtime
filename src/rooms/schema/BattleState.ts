@@ -11,6 +11,42 @@ export const CARD_DPS: Record<string, number> = {
   barrel_bomb: 55, meteor: 70, incubus: 15,
 };
 
+// --- Discrete Combat Constants ---
+// Attack cooldown in seconds. e.g., Archer attacks once every 1.2s
+export const CARD_ATTACK_SPEED: Record<string, number> = {
+  knight: 1.2, archer: 1.2, giant: 1.5, wyvern: 1.4, wizard: 1.4,
+  goblin: 1.1, barbarian: 1.3, healer: 2.0, gunslinger: 1.0,
+  barrel_bomb: 0, meteor: 0, incubus: 1.2,
+};
+
+// Attack damage per hit. (Calculated roughly as DPS * ATTACK_SPEED for existing balance)
+export const CARD_ATTACK_DAMAGE: Record<string, number> = {
+  knight: 30, archer: 24, giant: 38, wyvern: 35, wizard: 42,
+  goblin: 17, barbarian: 33, healer: 0, gunslinger: 40, // Healer does negative damage (heal) or handles it in custom logic
+  barrel_bomb: 55, meteor: 70, incubus: 18,
+};
+
+// Attack Range in units
+export const CARD_RANGE: Record<string, number> = {
+  knight: 1.0, archer: 4.5, giant: 1.2, wyvern: 1.5, wizard: 4.0,
+  goblin: 1.0, barbarian: 1.0, healer: 3.5, gunslinger: 5.0,
+  barrel_bomb: 0, meteor: 0, incubus: 1.2,
+};
+
+// Projectile speed (units per second). If 0, the attack is melee/instant and spawns no projectile.
+export const CARD_PROJECTILE_SPEED: Record<string, number> = {
+  knight: 0, archer: 8.0, giant: 0, wyvern: 0, wizard: 6.0,
+  goblin: 0, barbarian: 0, healer: 6.0, gunslinger: 10.0,
+  barrel_bomb: 0, meteor: 0, incubus: 0,
+};
+
+// Attack Splash Radius (AoE). If > 0, hits all enemies within this radius.
+export const CARD_ATTACK_SPLASH: Record<string, number> = {
+  knight: 0, archer: 0, giant: 0, wyvern: 2.0, wizard: 2.0,
+  goblin: 0, barbarian: 2.5, healer: 1.8, gunslinger: 0,
+  barrel_bomb: 0, meteor: 0, incubus: 0,
+};
+
 export const CARD_HP: Record<string, number> = {
   knight: 600, archer: 250, giant: 2000, wyvern: 500, wizard: 350,
   goblin: 150, barbarian: 500, healer: 400, gunslinger: 350,
@@ -92,6 +128,26 @@ export class DeployedUnit extends Schema {
   @type("float32") spawnTime: number = 0;
   @type("uint16") hp: number = 100;
   @type("uint16") maxHp: number = 100;
+  
+  // Animation and Combat states
+  @type("string") action: string = "idle"; // "idle", "walk", "attack"
+  @type("float32") lastAttackTime: number = 0; // Timestamp (in seconds from game start) of last attack
+  @type("string") targetId: string = ""; // ID of the current target (for animation facing)
+  @type("float32") deathTime: number = 0; // Tracks when HP hit 0 to delay cleanup for animations
+}
+
+export class Projectile extends Schema {
+  @type("string") id: string = "";
+  @type("string") sourceCardId: string = ""; // Used for styling the projectile
+  @type("uint8") team: number = 0;
+  @type("float32") x: number = 0;
+  @type("float32") z: number = 0;
+  @type("float32") targetX: number = 0;
+  @type("float32") targetZ: number = 0;
+  @type("string") targetId: string = ""; // The UID of the target unit/tower
+  @type("float32") speed: number = 5.0;
+  @type("uint16") damage: number = 0;
+  @type("float32") splashRadius: number = 0;
 }
 
 export class Player extends Schema {
@@ -106,6 +162,7 @@ export class Player extends Schema {
 
 export class BattleState extends Schema {
   @type({ map: Player }) players = new MapSchema<Player>();
+  @type({ map: Projectile }) projectiles = new MapSchema<Projectile>(); // Track active projectiles
   @type("uint16") elapsedSec: number = 0;
   @type("string") status: string = "waiting"; // waiting | playing | ended
   @type("string") winnerTeam: string = "";

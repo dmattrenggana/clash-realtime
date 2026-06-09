@@ -16,6 +16,7 @@ import {
   CARD_ATTACK_DAMAGE,
   CARD_RANGE,
   CARD_PROJECTILE_SPEED,
+  CARD_ATTACK_SPLASH,
   INITIAL_TOWER_HP,
   ELIXIR_REGEN_PER_SEC,
   MAX_DURATION,
@@ -336,7 +337,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         const unit = player.units.get(id);
         if (!unit) return;
         this.detonateSpell(player, enemy, unit);
-        player.units.delete(id); // despawn (drops from client mirror)
+        // Instead of deleting immediately, set HP to 0. 
+        // This tells the frontend it is "dying", triggering explosion.glb.
+        // It will be deleted in moveUnits during the next tick.
+        unit.hp = 0; 
       });
     });
   }
@@ -390,10 +394,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // 1. First, gather all alive troop units across both teams for collision checking
     const allAliveTroops: { unit: DeployedUnit; isAir: boolean }[] = [];
     playerList.forEach((player) => {
-      // Cleanup dead units before moving
+      // Cleanup dead units after a 1 second delay (for animations)
       player.units.forEach((unit, id) => {
         if (unit.hp <= 0) {
-          player.units.delete(id);
+          if (unit.deathTime === 0) {
+            unit.deathTime = this.state.elapsedSec;
+          } else if (this.state.elapsedSec - unit.deathTime > 1.0) {
+            player.units.delete(id);
+          }
         } else if (!SPELL_CARDS.has(unit.cardId)) {
           allAliveTroops.push({ unit, isAir: AIR_UNITS.has(unit.cardId) });
         }
@@ -507,24 +515,67 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
       attacker.units.forEach((unit) => {
         if (SPELL_CARDS.has(unit.cardId)) return;
-        if (unit.action !== "attack") return; // Only attack if in 'attack' state set by moveUnits
+        
+        // --- Special AI: Healer ---
+        if (unit.cardId === "healer") {
+          // Healers look for allies with lowest HP%
+          let healTarget: DeployedUnit | null = null;
+          let minHpRatio = 1.1;
+
+          attacker.units.forEach((ally) => {
+            if (ally.hp <= 0 || ally.hp >= ally.maxHp) return;
+            if (SPELL_CARDS.has(ally.cardId)) return;
+            const ratio = ally.hp / ally.maxHp;
+            if (ratio < minHpRatio) {
+              minHpRatio = ratio;
+              healTarget = ally;
+            }
+          });
+
+          if (healTarget) {
+            const d = Math.sqrt(Math.pow(healTarget.x - unit.x, 2) + Math.pow(healTarget.z - unit.z, 2));
+            const range = CARD_RANGE[unit.cardId] ?? 3.5;
+            if (d <= range) {
+              unit.action = "attack";
+              unit.targetId = ""; // No targetId for healing
+              
+              const now = this.state.elapsedSec;
+              const attackSpeed = CARD_ATTACK_SPEED[unit.cardId] || 1.0;
+              if (now - unit.lastAttackTime >= attackSpeed) {
+                unit.lastAttackTime = now;
+                const healAmount = CARD_ATTACK_DAMAGE[unit.cardId] || 20;
+                const splash = CARD_ATTACK_SPLASH[unit.cardId] || 1.8;
+                
+                // AoE Heal around target
+                attacker.units.forEach((ally) => {
+                  const dist = Math.sqrt(Math.pow(ally.x - healTarget!.x, 2) + Math.pow(ally.z - healTarget!.z, 2));
+                  if (dist <= splash) {
+                    ally.hp = Math.min(ally.maxHp, ally.hp + healAmount);
+                  }
+                });
+              }
+              return;
+            }
+          }
+          // If no heal target or out of range, moveUnits handles the rest
+        }
+
+        if (unit.action !== "attack") return;
 
         // Check cooldown
         const attackSpeed = CARD_ATTACK_SPEED[unit.cardId] || 1.0;
         const now = this.state.elapsedSec;
         if (now - unit.lastAttackTime < attackSpeed) return;
 
-        // Find current closest target to actually execute the hit/projectile
-        let closestTarget: { hp: number; x?: number; z?: number; type?: string; team: number } | null = null;
-        let targetUID = "";
+        // Find current closest target
+        let closestTarget: { hp: number; x: number; z: number; uid: string; team: number } | null = null;
         let minDist = Infinity;
 
         enemy.units.forEach((eUnit, uid) => {
           const d = Math.sqrt(Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2));
           if (d < minDist) {
             minDist = d;
-            closestTarget = eUnit;
-            targetUID = uid;
+            closestTarget = { hp: eUnit.hp, x: eUnit.x, z: eUnit.z, uid, team: eUnit.team };
           }
         });
 
@@ -535,18 +586,18 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
           if (d < minDist) {
             minDist = d;
-            closestTarget = { ...t, x: tx, z: tz } as any;
-            targetUID = t.uid;
+            closestTarget = { hp: t.hp, x: tx, z: tz, uid: t.uid, team: t.team };
           }
         });
 
         const range = CARD_RANGE[unit.cardId] ?? 2.2;
         if (closestTarget && minDist <= range + 0.5) {
           unit.lastAttackTime = now;
-          unit.targetId = targetUID;
+          unit.targetId = closestTarget.uid;
 
           const projSpeed = CARD_PROJECTILE_SPEED[unit.cardId] || 0;
           const damage = CARD_ATTACK_DAMAGE[unit.cardId] || 0;
+          const splash = CARD_ATTACK_SPLASH[unit.cardId] || 0;
 
           if (projSpeed > 0) {
             // RANGED: Spawn a projectile
@@ -557,23 +608,34 @@ export class BattleRoom extends Room<{ state: BattleState }> {
             projectile.team = unit.team;
             projectile.x = unit.x;
             projectile.z = unit.z;
-            projectile.targetX = (closestTarget as any).x ?? (closestTarget as any).position?.x ?? 0;
-            projectile.targetZ = (closestTarget as any).z ?? (closestTarget as any).position?.z ?? 0;
-            projectile.targetId = targetUID;
+            projectile.targetX = closestTarget.x;
+            projectile.targetZ = closestTarget.z;
+            projectile.targetId = closestTarget.uid;
             projectile.speed = projSpeed;
             projectile.damage = damage;
+            projectile.splashRadius = splash;
 
             this.state.projectiles.set(pid, projectile);
           } else {
-            // MELEE: Apply damage instantly
-            // We need to find the ACTUAL tower object in the state if target is a tower
-            const actualTower = enemy.towers.find(t => t.uid === targetUID);
-            const actualUnit = enemy.units.get(targetUID);
-
-            if (actualUnit) {
-              actualUnit.hp = Math.max(0, actualUnit.hp - damage);
-            } else if (actualTower) {
-              actualTower.hp = Math.max(0, actualTower.hp - damage);
+            // MELEE: Apply damage
+            if (splash > 0) {
+              // Melee AoE (Barbarian)
+              enemy.units.forEach((eUnit) => {
+                const d = Math.sqrt(Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2));
+                if (d <= splash) eUnit.hp = Math.max(0, eUnit.hp - damage);
+              });
+              enemy.towers.forEach((t) => {
+                const tx = t.type === "king" ? 0 : (unit.x > 0 ? 6 : -6);
+                const tz = enemy.team === 0 ? 14.5 : -14.5;
+                const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
+                if (d <= splash) t.hp = Math.max(0, t.hp - damage);
+              });
+            } else {
+              // Single target
+              const actualTower = enemy.towers.find(t => t.uid === closestTarget!.uid);
+              const actualUnit = enemy.units.get(closestTarget!.uid);
+              if (actualUnit) actualUnit.hp = Math.max(0, actualUnit.hp - damage);
+              else if (actualTower) actualTower.hp = Math.max(0, actualTower.hp - damage);
             }
           }
         }
@@ -586,13 +648,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const toRemove: string[] = [];
 
     this.state.projectiles.forEach((p, pid) => {
-      // 1. Update target position if target is a unit (towers are static)
       let currentTargetX = p.targetX;
       let currentTargetZ = p.targetZ;
 
       const playerList = Array.from(this.state.players.values());
-      const targetUnit = playerList.flatMap(pl => Array.from(pl.units.entries()))
-                                   .find(([uid]) => uid === p.targetId)?.[1];
+      const targetUnit = playerList.flatMap(pl => Array.from(pl.units.entries())).find(([uid]) => uid === p.targetId)?.[1];
       
       if (targetUnit) {
         currentTargetX = targetUnit.x;
@@ -601,7 +661,6 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         p.targetZ = currentTargetZ;
       }
 
-      // 2. Move towards target
       const dx = currentTargetX - p.x;
       const dz = currentTargetZ - p.z;
       const dist = Math.sqrt(dx * dx + dz * dz);
@@ -611,13 +670,24 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         // IMPACT
         const enemy = playerList.find(pl => pl.team !== p.team);
         if (enemy) {
-          const actualUnit = enemy.units.get(p.targetId);
-          const actualTower = enemy.towers.find(t => t.uid === p.targetId);
-
-          if (actualUnit) {
-            actualUnit.hp = Math.max(0, actualUnit.hp - p.damage);
-          } else if (actualTower) {
-            actualTower.hp = Math.max(0, actualTower.hp - p.damage);
+          if (p.splashRadius > 0) {
+            // AoE Splash
+            enemy.units.forEach((eUnit) => {
+              const d = Math.sqrt(Math.pow(eUnit.x - p.targetX, 2) + Math.pow(eUnit.z - p.targetZ, 2));
+              if (d <= p.splashRadius) eUnit.hp = Math.max(0, eUnit.hp - p.damage);
+            });
+            enemy.towers.forEach((t) => {
+              const tx = t.type === "king" ? 0 : (p.targetX > 0 ? 6 : -6);
+              const tz = enemy.team === 0 ? 14.5 : -14.5;
+              const d = Math.sqrt(Math.pow(tx - p.targetX, 2) + Math.pow(tz - p.targetZ, 2));
+              if (d <= p.splashRadius) t.hp = Math.max(0, t.hp - p.damage);
+            });
+          } else {
+            // Single target
+            const actualUnit = enemy.units.get(p.targetId);
+            const actualTower = enemy.towers.find(t => t.uid === p.targetId);
+            if (actualUnit) actualUnit.hp = Math.max(0, actualUnit.hp - p.damage);
+            else if (actualTower) actualTower.hp = Math.max(0, actualTower.hp - p.damage);
           }
         }
         toRemove.push(pid);
