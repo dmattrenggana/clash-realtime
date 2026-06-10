@@ -22,6 +22,7 @@ import { Room, Client, matchMaker } from "colyseus";
 
 const QUEUE_TARGET = 2;       // pair size for 1v1
 const HANDOFF_TIMEOUT_MS = 5_000;  // max wait for client matchAccepted after matchFound
+const MATCHMAKING_TIMEOUT_MS = process.env.MATCHMAKING_TIMEOUT_MS ? parseInt(process.env.MATCHMAKING_TIMEOUT_MS) : 20_000;
 
 interface InFlightHandoff {
   battleRoomId: string;
@@ -34,6 +35,8 @@ export class BattleQueueRoom extends Room {
   private pending = new Map<string, { wallet?: string, nickname?: string }>();
   // Tracks in-flight handoffs so we can cancel timeouts on matchAccepted / leave / dispose
   private handoffs = new Map<string, InFlightHandoff>();
+  // Tracks per-client matchmaking timeouts for AI Bot fallback (20 seconds)
+  private matchmakingTimeouts = new Map<string, Delayed>();
 
   onCreate(_options: any) {
     console.log(`[BattleQueue] Created`);
@@ -71,6 +74,12 @@ export class BattleQueueRoom extends Room {
     this.pending.set(client.sessionId, { wallet, nickname });
     client.send("queued", { position: this.pending.size });
 
+    // Arm a matchmaking timeout for this player to fallback to AI Bot
+    const timeout = this.clock.setTimeout(() => {
+      this.triggerSinglePlayerBotMatch(client.sessionId);
+    }, MATCHMAKING_TIMEOUT_MS);
+    this.matchmakingTimeouts.set(client.sessionId, timeout);
+
     if (this.pending.size >= QUEUE_TARGET) {
       // Don't await — fire and continue. matchPlayers handles errors.
       void this.matchPlayers();
@@ -81,6 +90,13 @@ export class BattleQueueRoom extends Room {
     if (this.pending.delete(client.sessionId)) {
       console.log(`[BattleQueue] ${client.sessionId} left queue`);
     }
+
+    const matchmakingTimeout = this.matchmakingTimeouts.get(client.sessionId);
+    if (matchmakingTimeout) {
+      matchmakingTimeout.clear();
+      this.matchmakingTimeouts.delete(client.sessionId);
+    }
+
     // If the client was mid-handoff, clean up so the timeout doesn't
     // fire on a session that's already gone.
     const handoff = this.handoffs.get(client.sessionId);
@@ -117,6 +133,18 @@ export class BattleQueueRoom extends Room {
     const b = this.pending.get(idB);
     this.pending.delete(idA);
     this.pending.delete(idB);
+
+    // Clear matchmaking timeouts of both paired players
+    const timeoutA = this.matchmakingTimeouts.get(idA);
+    if (timeoutA) {
+      timeoutA.clear();
+      this.matchmakingTimeouts.delete(idA);
+    }
+    const timeoutB = this.matchmakingTimeouts.get(idB);
+    if (timeoutB) {
+      timeoutB.clear();
+      this.matchmakingTimeouts.delete(idB);
+    }
 
     try {
       // 1. Create the battle room
@@ -176,5 +204,45 @@ export class BattleQueueRoom extends Room {
 
     this.handoffs.set(sessionId, { battleRoomId, reservation, timeout });
     console.log(`[BattleQueue] Sent matchFound to ${sessionId}, waiting for ack (timeout ${HANDOFF_TIMEOUT_MS}ms)`);
+  }
+
+  /**
+   * Triggers a single-player match against the AI bot after waiting alone for 20 seconds.
+   */
+  private async triggerSinglePlayerBotMatch(sessionId: string): Promise<void> {
+    const player = this.pending.get(sessionId);
+    if (!player) return; // Player already paired or left
+
+    // Atomically extract the player
+    this.pending.delete(sessionId);
+    this.matchmakingTimeouts.delete(sessionId);
+
+    console.log(`[BattleQueue] Matchmaking timeout reached for ${sessionId} (20s). Launching BattleRoom with AI Bot...`);
+
+    try {
+      // 1. Create a BattleRoom with triggerBot: true option
+      const battleRoom = await matchMaker.createRoom("battle", { triggerBot: true });
+      console.log(`[BattleQueue] Created Bot BattleRoom for ${sessionId} → room ${battleRoom.roomId}`);
+
+      // 2. Reserve a seat for this player
+      const reservation = await matchMaker.reserveSeatFor(battleRoom, {
+        wallet: player.wallet,
+        nickname: player.nickname,
+      });
+
+      // 3. Start handoff
+      const client = this.clients.find((c) => c.sessionId === sessionId);
+      if (client) {
+        this.startHandoff(client, reservation, battleRoom.roomId);
+      }
+    } catch (err) {
+      console.error(`[BattleQueue] triggerSinglePlayerBotMatch failed:`, err);
+      // Best-effort recovery: put player back in queue and re-arm timeout
+      this.pending.set(sessionId, player);
+      const timeout = this.clock.setTimeout(() => {
+        this.triggerSinglePlayerBotMatch(sessionId);
+      }, MATCHMAKING_TIMEOUT_MS);
+      this.matchmakingTimeouts.set(sessionId, timeout);
+    }
   }
 }

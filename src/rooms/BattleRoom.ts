@@ -4,6 +4,7 @@ import { z } from "zod";
 import { PrivyClient } from "@privy-io/server-auth";
 import type { Delayed } from "@colyseus/timer";
 import { tickGame } from "../game/gameLoop.js";
+import { BotBrain } from "../game/ai/BotBrain.js";
 import {
   BattleState,
   Player,
@@ -76,6 +77,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private emptyTimeout: Delayed | null = null;
   private cardsDeployed = new Map<string, number>(); // walletAddress -> count
   private totalDamageDealt = new Map<string, number>(); // walletAddress -> amount
+  private botBrain: BotBrain | null = null;
+  private triggerBot: boolean = false;
 
   static async onAuth(token: string, options: any, context: any) {
     // Read env here (not at module load) — dotenv loads .env.production
@@ -119,6 +122,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.state = new BattleState();
     this.state.seed = options.seed || this.randomSeed();
     console.log(`[BattleRoom] Created with seed: ${this.state.seed}`);
+
+    if (options.triggerBot === true) {
+      this.triggerBot = true;
+      console.log(`[BattleRoom] Bot trigger is ARMED for this session`);
+    }
 
     // Empty-room watchdog: if no second player joins within the timeout,
     // dispose to prevent leaking rooms when matchmaking handoff fails.
@@ -166,7 +174,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.state.players.set(client.sessionId, player);
     console.log(`[BattleRoom] ${client.sessionId} joined (wallet: ${wallet}, team: ${team}, nickname: ${nickname})`);
 
-    if (this.state.players.size === 2) {
+    if (this.triggerBot) {
+      this.activateBotFallback();
+    } else if (this.state.players.size === 2) {
       this.state.status = "playing";
       this.gameStartTime = Date.now();
       // Both players are in — cancel the empty-room watchdog.
@@ -264,6 +274,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   }
 
   private tick() {
+    if (this.botBrain) {
+      this.botBrain.update(TICK_RATE_MS);
+    }
     tickGame(
       this.state,
       this.gameStartTime,
@@ -372,83 +385,170 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     }
   }
 
+  /**
+   * Activates the AI bot fallback system.
+   * Generates a mock session ID, registers the bot as a player in the game state, and instantiates its BotBrain.
+   */
+  public activateBotFallback() {
+    if (this.botBrain) {
+      console.log("[BattleRoom] Bot fallback already active.");
+      return;
+    }
+    if (this.state.status === "ended") {
+      console.log("[BattleRoom] Cannot activate bot: game already ended.");
+      return;
+    }
+
+    const botSessionId = `BOT_${randomBytes(2).toString("hex")}`;
+    const team = this.state.players.size; // Generates 1 if 1 player is already in
+
+    const player = new Player();
+    player.walletAddress = `0xbot_${randomBytes(4).toString("hex")}`;
+    player.nickname = "AI Bot";
+    player.team = team;
+    player.connected = true;
+
+    // Create 3 towers for the Bot player
+    const t1 = new Tower();
+    t1.uid = randomBytes(4).toString("hex");
+    t1.team = team;
+    t1.type = "princess";
+    t1.hp = INITIAL_TOWER_HP.princess;
+    t1.maxHp = INITIAL_TOWER_HP.princess;
+
+    const t2 = new Tower();
+    t2.uid = randomBytes(4).toString("hex");
+    t2.team = team;
+    t2.type = "king";
+    t2.hp = INITIAL_TOWER_HP.king;
+    t2.maxHp = INITIAL_TOWER_HP.king;
+
+    const t3 = new Tower();
+    t3.uid = randomBytes(4).toString("hex");
+    t3.team = team;
+    t3.type = "princess";
+    t3.hp = INITIAL_TOWER_HP.princess;
+    t3.maxHp = INITIAL_TOWER_HP.princess;
+
+    player.towers.push(t1, t2, t3);
+
+    // Register player into room state
+    this.state.players.set(botSessionId, player);
+    console.log(`[BattleRoom] Bot ${botSessionId} registered as team ${team} (nickname: ${player.nickname})`);
+
+    // Instantiate BotBrain
+    this.botBrain = new BotBrain(this, botSessionId);
+
+    // If game has 2 players, kick-start the loop
+    if (this.state.players.size === 2) {
+      this.state.status = "playing";
+      this.gameStartTime = Date.now();
+
+      // Disarm the empty-room watchdog
+      if (this.emptyTimeout !== null) {
+        this.emptyTimeout.clear();
+        this.emptyTimeout = null;
+        console.log(`[BattleRoom] Empty-room guard disarmed (game started with Bot)`);
+      }
+
+      // Start tick loop if not running
+      if (this.tickInterval === null) {
+        this.tickInterval = this.clock.setInterval(() => this.tick(), TICK_RATE_MS);
+      }
+      console.log(`[BattleRoom] Game started against AI Bot!`);
+    }
+  }
+
+  public handleDeployCard(client: Client, payload: { cardId: string; x: number; z: number }) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    if (this.state.status !== "playing") {
+      client.send("error", { code: "NOT_PLAYING", message: "Match is not in playing state" });
+      return;
+    }
+    if (!player.connected) {
+      // Reject if user is in drop state — server will resume them on reconnect
+      client.send("error", { code: "DISCONNECTED", message: "You are disconnected" });
+      return;
+    }
+
+    const cost = CARD_COST[payload.cardId];
+    if (cost === undefined) {
+      client.send("error", { code: "INVALID_CARD", message: `Unknown card: ${payload.cardId}` });
+      return;
+    }
+    if (player.elixir < cost) {
+      client.send("error", { code: "INSUFFICIENT_ELIXIR", message: "Not enough elixir" });
+      return;
+    }
+
+    // Zone validation: each team has its own half
+    // team 0 -> player side: z > 0; team 1 -> enemy side: z < 0
+    // Spells (like meteor or barrel_bomb) ignore zone restrictions and can be spawned anywhere
+    const isSpell = SPELL_CARDS.has(payload.cardId);
+    const isMySide =
+      isSpell ||
+      (player.team === 0 && payload.z > 0) ||
+      (player.team === 1 && payload.z < 0);
+    if (!isMySide) {
+      client.send("error", { code: "INVALID_ZONE", message: "Can only deploy on your side" });
+      return;
+    }
+
+    const spawnCount = CARD_SPAWN_COUNT[payload.cardId] || 1;
+    player.elixir -= cost;
+
+    // Track cards deployed
+    const currentCount = this.cardsDeployed.get(player.walletAddress) || 0;
+    this.cardsDeployed.set(player.walletAddress, currentCount + 1);
+
+    for (let i = 0; i < spawnCount; i++) {
+      const unit = new DeployedUnit();
+      unit.cardId = payload.cardId;
+      unit.team = player.team;
+      
+      // Add slight offset for multi-unit spawns so they don't overlap perfectly
+      const offsetX = spawnCount > 1 ? (i - (spawnCount - 1) / 2) * 0.8 : 0;
+      unit.x = payload.x + offsetX;
+      unit.z = payload.z;
+      
+      unit.hp = CARD_HP[payload.cardId] || 100;
+      unit.maxHp = unit.hp;
+      unit.spawnTime = this.state.elapsedSec;
+
+      const unitId = `${client.sessionId}-${this.clock.currentTime}-${i}`;
+      player.units.set(unitId, unit);
+    }
+
+    console.log(`[BattleRoom] Team ${player.team} successfully pushed ${spawnCount} units to state for ${payload.cardId}`);
+  }
+
+  public handleSurrender(client: Client) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    if (this.state.status !== "playing") return;
+    const opponent = Array.from(this.state.players.values()).find(
+      (p) => p.team !== player.team,
+    );
+    if (opponent) {
+      this.state.winnerTeam = String(opponent.team);
+      this.endMatch();
+    }
+  }
+
   messages = {
     deployCard: validate(deployCardSchema, (client, payload) => {
-      const player = this.state.players.get(client.sessionId);
-      if (!player) return;
-      if (this.state.status !== "playing") {
-        client.send("error", { code: "NOT_PLAYING", message: "Match is not in playing state" });
-        return;
-      }
-      if (!player.connected) {
-        // Reject if user is in drop state — server will resume them on reconnect
-        client.send("error", { code: "DISCONNECTED", message: "You are disconnected" });
-        return;
-      }
-
-      const cost = CARD_COST[payload.cardId];
-      if (cost === undefined) {
-        client.send("error", { code: "INVALID_CARD", message: `Unknown card: ${payload.cardId}` });
-        return;
-      }
-      if (player.elixir < cost) {
-        client.send("error", { code: "INSUFFICIENT_ELIXIR", message: "Not enough elixir" });
-        return;
-      }
-
-      // Zone validation: each team has its own half
-      // team 0 -> player side: z > 0; team 1 -> enemy side: z < 0
-      // Spells (like meteor or barrel_bomb) ignore zone restrictions and can be spawned anywhere
-      const isSpell = SPELL_CARDS.has(payload.cardId);
-      const isMySide =
-        isSpell ||
-        (player.team === 0 && payload.z > 0) ||
-        (player.team === 1 && payload.z < 0);
-      if (!isMySide) {
-        client.send("error", { code: "INVALID_ZONE", message: "Can only deploy on your side" });
-        return;
-      }
-
-      const spawnCount = CARD_SPAWN_COUNT[payload.cardId] || 1;
-      player.elixir -= cost;
-
-      // Track cards deployed
-      const currentCount = this.cardsDeployed.get(player.walletAddress) || 0;
-      this.cardsDeployed.set(player.walletAddress, currentCount + 1);
-
-      for (let i = 0; i < spawnCount; i++) {
-        const unit = new DeployedUnit();
-        unit.cardId = payload.cardId;
-        unit.team = player.team;
-        
-        // Add slight offset for multi-unit spawns so they don't overlap perfectly
-        const offsetX = spawnCount > 1 ? (i - (spawnCount - 1) / 2) * 0.8 : 0;
-        unit.x = payload.x + offsetX;
-        unit.z = payload.z;
-        
-        unit.hp = CARD_HP[payload.cardId] || 100;
-        unit.maxHp = unit.hp;
-        unit.spawnTime = this.state.elapsedSec;
-
-        const unitId = `${client.sessionId}-${this.clock.currentTime}-${i}`;
-        player.units.set(unitId, unit);
-      }
-
-      console.log(`[BattleRoom] Team ${player.team} successfully pushed ${spawnCount} units to state for ${payload.cardId}`);
+      this.handleDeployCard(client, payload);
     }),
 
     surrender: validate(surrenderSchema, (client, _payload) => {
-      const player = this.state.players.get(client.sessionId);
-      if (!player) return;
-      if (this.state.status !== "playing") return;
-      const opponent = Array.from(this.state.players.values()).find(
-        (p) => p.team !== player.team,
-      );
-      if (opponent) {
-        this.state.winnerTeam = String(opponent.team);
-        this.endMatch();
-      }
+      this.handleSurrender(client);
     }),
+
+    DEBUG_SPAWN_BOT: (client: Client, _payload: any) => {
+      console.log(`[BattleRoom] DEBUG_SPAWN_BOT triggered by client: ${client.sessionId}`);
+      this.activateBotFallback();
+    },
   };
 
   private randomSeed(): string {
