@@ -28,7 +28,7 @@ export class BotBrain {
 
   // Match start delay to allow the user screen to load and countdown to finish
   private gameTimeElapsedMs: number = 0;
-  private startDelayMs: number = 6000; // 6 seconds delay before first move
+  private startDelayMs: number = 1000; // 1 second delay before first move
 
   constructor(room: BattleRoom, botSessionId: string) {
     this.room = room;
