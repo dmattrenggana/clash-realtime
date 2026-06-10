@@ -21,10 +21,48 @@ export class BotBrain {
   private cooldownAccumulator: number = 0;
   private thinkingCooldownMs: number = 2000; // Thinks every 2 seconds
 
+  // Clash Royale style deck and hand cycling variables
+  private deck: string[] = [];  // Selected 8 cards out of 12
+  private hand: string[] = [];  // Current 4 active cards in hand
+  private queue: string[] = []; // Current 4 cards waiting in the draw queue
+
+  // Match start delay to allow the user screen to load and countdown to finish
+  private gameTimeElapsedMs: number = 0;
+  private startDelayMs: number = 6000; // 6 seconds delay before first move
+
   constructor(room: BattleRoom, botSessionId: string) {
     this.room = room;
     this.botSessionId = botSessionId;
+    
+    // Initialize the deck, active hand, and draw queue
+    this.initializeDeckAndHand();
+    
     console.log(`[BotBrain] Initialized for sessionId: ${this.botSessionId}`);
+    console.log(`[BotBrain] Selected 8-Card Deck: [${this.deck.join(", ")}]`);
+    console.log(`[BotBrain] Initial Active Hand: [${this.hand.join(", ")}]`);
+    console.log(`[BotBrain] Initial Draw Queue: [${this.queue.join(", ")}]`);
+    console.log(`[BotBrain] Match start delay armed: ${this.startDelayMs}ms`);
+  }
+
+  /**
+   * Shuffles the 12 available cards to select a random 8-card deck,
+   * then splits them into a 4-card active hand and a 4-card draw queue.
+   */
+  private initializeDeckAndHand() {
+    const allCards = [
+      "knight", "archer", "giant", "wyvern", "wizard", 
+      "goblin", "barbarian", "healer", "gunslinger", 
+      "barrel_bomb", "meteor", "incubus"
+    ];
+
+    // 1. Pick 8 random cards for the deck
+    const shuffledAll = [...allCards].sort(() => Math.random() - 0.5);
+    this.deck = shuffledAll.slice(0, 8);
+
+    // 2. From the 8 cards, pick 4 for the hand and 4 for the queue
+    const shuffledDeck = [...this.deck].sort(() => Math.random() - 0.5);
+    this.hand = shuffledDeck.slice(0, 4);
+    this.queue = shuffledDeck.slice(4, 8);
   }
 
   /**
@@ -33,6 +71,12 @@ export class BotBrain {
    */
   public update(dt: number) {
     if (this.room.state.status !== "playing") return;
+
+    // Tick the match start delay
+    this.gameTimeElapsedMs += dt;
+    if (this.gameTimeElapsedMs < this.startDelayMs) {
+      return; // Wait for player screen to load and countdown to complete
+    }
 
     this.cooldownAccumulator += dt;
     if (this.cooldownAccumulator >= this.thinkingCooldownMs) {
@@ -51,14 +95,41 @@ export class BotBrain {
     const bestAction = this.evaluateDecisions(battlefield);
     if (bestAction && bestAction.score > 0) {
       console.log(
-        `[BotBrain] Selected Action: Deploy ${bestAction.cardId} at (${bestAction.x.toFixed(1)}, ${bestAction.z.toFixed(1)}) with utility score: ${bestAction.score.toFixed(2)}`
+        `[BotBrain] Selected Action: Deploy ${bestAction.cardId} from hand [${this.hand.join(", ")}] at (${bestAction.x.toFixed(1)}, ${bestAction.z.toFixed(1)}) with utility score: ${bestAction.score.toFixed(2)}`
       );
+      
       this.executeAction("deployCard", {
         cardId: bestAction.cardId,
         x: bestAction.x,
         z: bestAction.z,
       });
+
+      // Cycle the card out of our hand and draw the next card from the queue!
+      this.cycleCard(bestAction.cardId);
     }
+  }
+
+  /**
+   * Cycles a deployed card out of the bot's hand into the back of the queue,
+   * drawing the first card from the front of the queue into the active hand.
+   */
+  private cycleCard(cardId: string) {
+    const index = this.hand.indexOf(cardId);
+    if (index === -1) return;
+
+    // 1. Remove the deployed card from active hand
+    this.hand.splice(index, 1);
+
+    // 2. Draw the next card from the front of the queue
+    const drawnCard = this.queue.shift();
+    if (drawnCard) {
+      this.hand.push(drawnCard);
+    }
+
+    // 3. Put the deployed card back into the rear of the draw queue
+    this.queue.push(cardId);
+
+    console.log(`[BotBrain] Card Cycled. New Hand: [${this.hand.join(", ")}], New Queue: [${this.queue.join(", ")}]`);
   }
 
   /**
@@ -145,7 +216,8 @@ export class BotBrain {
     const { botPlayer } = battlefield;
     const elixir = botPlayer.elixir;
 
-    const availableCards = Object.keys(CARD_COST);
+    // The bot can ONLY choose to deploy cards that are currently in its active hand!
+    const availableCards = this.hand;
     let bestAction: BotAction | null = null;
 
     for (const cardId of availableCards) {
@@ -183,9 +255,9 @@ export class BotBrain {
       for (const enemyUnit of enemyUnitsOnMySide) {
         // Find distance to our closest active tower
         for (const tower of botTowers) {
-          // Approximate tower coordinates based on index and team (rough lookup)
+          // Approximate tower coordinates based on index and team
           const tz = isBotTeam0 ? (tower.type === "king" ? 13 : 10) : (tower.type === "king" ? -13 : -10);
-          const tx = tower.type === "king" ? 0 : (tower.hp > 0 ? -6 : 6); // rough mapping
+          const tx = tower.type === "king" ? 0 : (tower.hp > 0 ? -6 : 6);
           const dist = Math.pow(enemyUnit.x - tx, 2) + Math.pow(enemyUnit.z - tz, 2);
           if (dist < minDistanceToTower) {
             minDistanceToTower = dist;
