@@ -273,7 +273,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     );
   }
 
-  private async recordMatchToServerSide(player: Player, enemy: Player, duration: number) {
+  private async recordMatchToServerSide(player: Player, enemy: Player, duration: number, isWinner: boolean) {
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     const gameServerSecret = process.env.GAME_SERVER_SECRET;
@@ -289,7 +289,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const cardsDeployed = this.cardsDeployed.get(player.walletAddress) || 0;
     const totalDamageDealt = Math.floor(this.totalDamageDealt.get(player.walletAddress) || 0);
 
-    console.log(`[BattleRoom] Attempting to record match server-side for wallet: ${playerWallet}...`);
+    console.log(`[BattleRoom] Attempting to record match server-side for wallet: ${playerWallet} (isWinner: ${isWinner})...`);
 
     try {
       const response = await fetch(`${supabaseUrl}/functions/v1/record-match`, {
@@ -305,7 +305,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           matchDurationSec: duration,
           cardsDeployed,
           totalDamageDealt,
-          playerWallet
+          playerWallet,
+          outcome: isWinner ? "victory" : "defeat"
         })
       });
 
@@ -362,8 +363,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (playerList.length >= 2) {
       const p0 = playerList[0];
       const p1 = playerList[1];
-      this.recordMatchToServerSide(p0, p1, this.state.elapsedSec);
-      this.recordMatchToServerSide(p1, p0, this.state.elapsedSec);
+      
+      const p0Won = this.state.winnerTeam === "0";
+      const p1Won = this.state.winnerTeam === "1";
+
+      this.recordMatchToServerSide(p0, p1, this.state.elapsedSec, p0Won);
+      this.recordMatchToServerSide(p1, p0, this.state.elapsedSec, p1Won);
     }
   }
 
