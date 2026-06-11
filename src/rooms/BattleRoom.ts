@@ -200,13 +200,50 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // Secure Nickname Fetch: Asynchronously override the nickname with the definitive DB version
     if (wallet && wallet !== "anonymous") {
       (async () => {
+        // SECURITY (Celah 1 — invite code bypass): the client's LandingPage
+        // invite gate is bypassable via sessionStorage. Re-verify on the
+        // server: the wallet must have a row in invite_codes with used_by =
+        // wallet. If not, kick the client.
+        //
+        // Gated by INVITE_GATE_ENABLED env flag so we can deploy server
+        // first, run the backfill migration second, and flip the flag on
+        // when ready. Default: false (off) so we never break the live game
+        // by accident. Set INVITE_GATE_ENABLED=true in .env.production
+        // after running the 2026-06-11 migrations.
+        if (process.env.INVITE_GATE_ENABLED === "true") {
+          try {
+            const { data: invite, error: inviteErr } = await getSupabase()
+              .from('invite_codes')
+              .select('code, used_by')
+              .eq('used_by', wallet.toLowerCase())
+              .maybeSingle();
+
+            if (inviteErr) {
+              console.warn(`[BattleRoom] Invite gate DB error for ${wallet}: ${inviteErr.message}`);
+              // Don't block on DB hiccups — fail open + log loudly.
+            } else if (!invite) {
+              console.warn(`[BattleRoom] INVITE GATE: rejecting ${wallet} — no invite_codes row.`);
+              client.send("error", {
+                code: "INVITE_REQUIRED",
+                message: "You need a valid invite code to play. Visit / to redeem one."
+              });
+              void client.leave();
+              return;
+            } else {
+              console.log(`[BattleRoom] Invite gate OK: ${wallet} via code ${invite.code}`);
+            }
+          } catch (err) {
+            console.error(`[BattleRoom] Invite gate exception for ${wallet}:`, err);
+          }
+        }
+
         try {
           const { data, error } = await getSupabase()
             .from('profiles')
             .select('nickname')
             .eq('wallet_address', wallet.toLowerCase())
             .maybeSingle();
-            
+
           if (!error && data?.nickname) {
             console.log(`[BattleRoom] SECURE AUTH: Overriding nickname for ${wallet} -> ${data.nickname}`);
             player.nickname = data.nickname;
