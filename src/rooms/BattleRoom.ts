@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { Room, Client, CloseCode, validate } from "colyseus";
 import { z } from "zod";
 import { PrivyClient } from "@privy-io/server-auth";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import type { Delayed } from "@colyseus/timer";
 import { tickGame } from "../game/gameLoop.js";
 import { BotBrain } from "../game/ai/BotBrain.js";
@@ -44,6 +45,20 @@ function getPrivy(): PrivyClient {
     _privy = new PrivyClient(PRIVY_APP_ID, PRIVY_APP_SECRET);
   }
   return _privy;
+}
+
+// Lazy-init Supabase client for Server-Side Profile Auth
+let _supabase: SupabaseClient | null = null;
+function getSupabase(): SupabaseClient {
+  if (!_supabase) {
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) {
+      console.warn("[BattleRoom] Supabase URL or Service Role Key missing. Nicknames will fallback to client-provided.");
+    }
+    _supabase = createClient(url || 'http://localhost:54321', key || 'dummy');
+  }
+  return _supabase;
 }
 
 // Zod schemas for incoming messages (server-side validation; trust no client)
@@ -141,15 +156,35 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   onJoin(client: Client, options: any, auth?: any) {
     // Ambil wallet dari auth (Privy) atau options, pastikan string
     const wallet = String(auth?.wallet || options?.wallet || "anonymous");
-    // Ambil nickname dari options
-    const nickname = String(options?.nickname || "Anonymous");
+    // Fallback awal (tidak dipercaya 100%)
+    const fallbackNickname = String(options?.nickname || "Anonymous");
 
     const team = this.state.players.size;
     const player = new Player();
     player.walletAddress = wallet;
-    player.nickname = nickname;
+    player.nickname = fallbackNickname;
     player.team = team;
     player.connected = true;
+
+    // Secure Nickname Fetch: Asynchronously override the nickname with the definitive DB version
+    if (wallet && wallet !== "anonymous") {
+      (async () => {
+        try {
+          const { data, error } = await getSupabase()
+            .from('profiles')
+            .select('nickname')
+            .eq('wallet_address', wallet.toLowerCase())
+            .maybeSingle();
+            
+          if (!error && data?.nickname) {
+            console.log(`[BattleRoom] SECURE AUTH: Overriding nickname for ${wallet} -> ${data.nickname}`);
+            player.nickname = data.nickname;
+          }
+        } catch (err) {
+          console.error(`[BattleRoom] Failed to fetch secure nickname for ${wallet}`, err);
+        }
+      })();
+    }
 
     const t1 = new Tower();
     t1.uid = randomBytes(4).toString("hex");
@@ -172,7 +207,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     player.towers.push(t1, t2, t3);
 
     this.state.players.set(client.sessionId, player);
-    console.log(`[BattleRoom] ${client.sessionId} joined (wallet: ${wallet}, team: ${team}, nickname: ${nickname})`);
+    console.log(`[BattleRoom] ${client.sessionId} joined (wallet: ${wallet}, team: ${team}, nickname: ${fallbackNickname})`);
 
     if (this.triggerBot) {
       this.activateBotFallback();
