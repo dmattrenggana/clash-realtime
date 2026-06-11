@@ -29,15 +29,19 @@ const server = defineServer({
      */
     express: (app) => {
         // --- MANUAL CORS MIDDLEWARE ---
-        // Fix for: "Access to fetch at ... has been blocked by CORS policy"
+        // SECURITY (Celah 7 in audit): localhost is only allowed in non-prod
+        // environments. In production, only the live domain(s) are allowlisted
+        // so a malicious site on http://localhost:5173 cannot reach the
+        // production WebSocket / HTTP API on behalf of a logged-in user.
         app.use((req, res, next) => {
             const origin = req.headers.origin;
             const allowedOrigins = [
                 "https://clashonchain.xyz",
                 "https://www.clashonchain.xyz",
-                "http://localhost:5173", // For local dev
-                "http://localhost:4173"
             ];
+            if (process.env.NODE_ENV !== "production") {
+                allowedOrigins.push("http://localhost:5173", "http://localhost:4173");
+            }
 
             if (origin && allowedOrigins.includes(origin)) {
                 res.setHeader("Access-Control-Allow-Origin", origin);

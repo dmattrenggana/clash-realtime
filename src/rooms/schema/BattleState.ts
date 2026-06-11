@@ -161,7 +161,10 @@ export class Player extends Schema {
   @type("string") walletAddress: string = "";
   @type("string") nickname: string = "";
   @type("uint8") team: number = 0;
-  @type("float32") elixir: number = 5;
+  // SECURITY (Celah 5 in audit): uint8 is sufficient for elixir (0..10).
+  // float32 is a wider type than needed and historically made us vulnerable
+  // to floating-point bug regressions in regen/deduct code. Hard cap server-side.
+  @type("uint8") elixir: number = 5;
   @type("boolean") connected: boolean = true;
   @type([Tower]) towers = new ArraySchema<Tower>();
   @type({ map: DeployedUnit }) units = new MapSchema<DeployedUnit>();

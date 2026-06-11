@@ -99,15 +99,16 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // Read env here (not at module load) — dotenv loads .env.production
     // AFTER this module is imported, so module-level reads would be empty.
     const allowAnon = process.env.ALLOW_ANON_USERS === "true";
-    
-    // Robust wallet extraction from options
-    const walletFromOptions = (typeof options.wallet === 'object' && options.wallet !== null)
-      ? options.wallet.wallet
-      : (options.wallet || "anonymous");
 
-    // Dev/anon mode: bypass ALL auth. Any token (or none) is accepted as anonymous.
+    // Dev/anon mode: bypass ALL auth. Any token (or none) is accepted as
+    // anonymous. Wallet is whatever the client sent (no verification).
+    // SECURITY: this mode is for local development only. It must NEVER be
+    // enabled in production — anyone can join as any wallet.
     if (allowAnon) {
-      return { userId: walletFromOptions, wallet: walletFromOptions };
+      const wallet = (typeof options.wallet === 'object' && options.wallet !== null)
+        ? options.wallet.wallet
+        : (options.wallet || "anonymous");
+      return { userId: wallet, wallet };
     }
     // Production: require non-empty token
     if (!token) {
@@ -116,9 +117,39 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     try {
       // verifyAuthToken handles JWKS fetch, signature check, and expiration.
       const claims = await getPrivy().verifyAuthToken(token);
-      return { userId: claims.userId, wallet: walletFromOptions };
+      // SECURITY (Celah 2 in audit): do NOT trust the client's `options.wallet`
+      // for the authoritative game identity. The token is verified, so the
+      // `claims.userId` (Privy DID) is server-truth. Cross-check by fetching
+      // the canonical wallet from Privy's user object.
+      // If the client supplied a `wallet` option and it does NOT match the
+      // Privy-linked wallet, REJECT the auth (spoofing attempt).
+      const clientClaimedWallet = (typeof options.wallet === 'object' && options.wallet !== null)
+        ? options.wallet.wallet
+        : (options.wallet || null);
+
+      let authoritativeWallet: string | null = null;
+      try {
+        const user = await getPrivy().getUser(claims.userId);
+        authoritativeWallet = user.wallet?.address?.toLowerCase() ?? null;
+      } catch (err) {
+        console.warn(`[BattleRoom] Could not fetch Privy user for ${claims.userId}:`, (err as Error).message);
+      }
+
+      if (clientClaimedWallet && authoritativeWallet &&
+          clientClaimedWallet.toLowerCase() !== authoritativeWallet) {
+        console.warn(
+          `[BattleRoom] Wallet mismatch: client sent ${clientClaimedWallet} but ` +
+          `Privy says ${authoritativeWallet}. Possible spoof — rejecting auth.`
+        );
+        throw new Error("Wallet does not match authenticated identity");
+      }
+
+      // Use the authoritative Privy-linked wallet; fall back to userId (Privy
+      // DID) if no wallet is linked (e.g. user only has email login).
+      const finalWallet = authoritativeWallet ?? claims.userId;
+      return { userId: claims.userId, wallet: finalWallet };
     } catch (err) {
-      throw new Error("Invalid auth token");
+      throw new Error(`Invalid auth token: ${(err as Error).message}`);
     }
   }
 
@@ -581,6 +612,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     }),
 
     DEBUG_SPAWN_BOT: (client: Client, _payload: any) => {
+      // SECURITY: this is a debug-only command. In production it must be a
+      // no-op — otherwise a malicious client could spawn a bot mid-match
+      // and corrupt the player list. (See security audit, Celah 3.)
+      if (process.env.NODE_ENV === "production") {
+        console.warn(`[BattleRoom] DEBUG_SPAWN_BOT blocked in production (client: ${client.sessionId})`);
+        return;
+      }
       console.log(`[BattleRoom] DEBUG_SPAWN_BOT triggered by client: ${client.sessionId}`);
       this.activateBotFallback();
     },
