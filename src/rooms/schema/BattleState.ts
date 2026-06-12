@@ -166,6 +166,13 @@ export class Player extends Schema {
   // to floating-point bug regressions in regen/deduct code. Hard cap server-side.
   @type("uint8") elixir: number = 5;
   @type("boolean") connected: boolean = true;
+  // MCP agent battleground integration: when this player is an AI agent
+  // (joined via clash-mcp-server), isAgent=true and agentId is the row
+  // id from the public.agents table. The endMatch flow uses these to
+  // route match recording to record_agent_match RPC instead of
+  // secure_record_match (which would inflate the human's profile).
+  @type("boolean") isAgent: boolean = false;
+  @type("string") agentId: string = "";
   @type([Tower]) towers = new ArraySchema<Tower>();
   @type({ map: DeployedUnit }) units = new MapSchema<DeployedUnit>();
 }

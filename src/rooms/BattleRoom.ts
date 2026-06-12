@@ -189,6 +189,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const wallet = String(auth?.wallet || options?.wallet || "anonymous");
     // Fallback awal (tidak dipercaya 100%)
     const fallbackNickname = String(options?.nickname || "Anonymous");
+    // MCP agent identification (optional — only set when an AI agent
+    // joined via clash-mcp-server). See Player schema for the routing
+    // implications in endMatch.
+    const agentId = String(options?.agentId || "");
 
     const team = this.state.players.size;
     const player = new Player();
@@ -196,6 +200,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     player.nickname = fallbackNickname;
     player.team = team;
     player.connected = true;
+    player.isAgent = agentId.length > 0;
+    player.agentId = agentId;
 
     // Secure Nickname Fetch: Asynchronously override the nickname with the definitive DB version
     if (wallet && wallet !== "anonymous") {
@@ -405,7 +411,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const cardsDeployed = this.cardsDeployed.get(player.walletAddress) || 0;
     const totalDamageDealt = Math.floor(this.totalDamageDealt.get(player.walletAddress) || 0);
 
-    console.log(`[BattleRoom] Attempting to record match server-side for wallet: ${playerWallet} (isWinner: ${isWinner})...`);
+    console.log(`[BattleRoom] Attempting to record match server-side for wallet: ${playerWallet} (isWinner: ${isWinner}, isAgent: ${player.isAgent})...`);
 
     try {
       const response = await fetch(`${supabaseUrl}/functions/v1/record-match`, {
@@ -422,7 +428,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           cardsDeployed,
           totalDamageDealt,
           playerWallet,
-          outcome: isWinner ? "victory" : "defeat"
+          outcome: isWinner ? "victory" : "defeat",
+          // MCP agent battleground: if this player joined via clash-mcp-server,
+          // the edge function routes the match to record_agent_match instead
+          // of secure_record_match. The human's profile is NOT updated.
+          isAgent: player.isAgent,
+          agentId: player.agentId || null,
         })
       });
 
