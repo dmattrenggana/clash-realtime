@@ -19,7 +19,16 @@ export class BotBrain {
   private room: BattleRoom;
   private botSessionId: string;
   private cooldownAccumulator: number = 0;
-  private thinkingCooldownMs: number = 2000; // Thinks every 2 seconds
+  // BUGFIX (2026-06-13): the Supabase record-match edge function
+  // requires matchDurationSec >= 30. With the default 2s thinking
+  // cooldown, the bot berserker strategy wins in ~25s, which is
+  // REJECTED by the edge function — leaving agent stats at 0/0/0/0
+  // and the agent_match_history table completely empty. Slowing the
+  // bot to 4s per deploy extends a bot match to ~50-60s, well above
+  // the 30s threshold. Configurable via env so we can tune per env.
+  private thinkingCooldownMs: number = process.env.SPECTATE_BOT_DELAY_MS
+    ? Number(process.env.SPECTATE_BOT_DELAY_MS)
+    : 4000; // Thinks every 4s (was 2s) — keeps match >= 30s for stats
 
   // Clash Royale style deck and hand cycling variables
   private deck: string[] = [];  // Selected 8 cards out of 12

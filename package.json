@@ -38,6 +38,7 @@
     "@privy-io/server-auth": "^1.32.0",
     "@supabase/supabase-js": "^2.108.1",
     "colyseus": "^0.17.6",
+    "colyseus.js": "^0.16.22",
     "dotenv": "^17.4.2",
     "express": "^4.18.2",
     "zod": "^4.1.12"
