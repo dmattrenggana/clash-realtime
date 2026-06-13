@@ -11,6 +11,28 @@ import {
 import { BattleRoom } from "./rooms/BattleRoom.js";
 import { BattleQueueRoom } from "./rooms/BattleQueueRoom.js";
 
+// Load .env.production (or .env as fallback) at startup.
+// CRITICAL: must run BEFORE BattleRoom.onAuth or onCreate reads process.env.
+// The env file holds secrets (SUPABASE_SERVICE_ROLE_KEY, GAME_SERVER_SECRET)
+// that recordMatchToServerSide needs to call the record-match edge function.
+//
+// Pattern: load .env.production if it exists (production deploys), otherwise
+// .env (local dev). No dotenv import = no env loaded; BattleRoom would
+// log "Supabase integration skipped" on every match.
+import dotenv from "dotenv";
+import * as path from "path";
+import * as fs from "fs";
+
+const envFile = process.env.NODE_ENV === "production" && fs.existsSync(path.resolve(process.cwd(), ".env.production"))
+    ? ".env.production"
+    : ".env";
+dotenv.config({ path: path.resolve(process.cwd(), envFile) });
+if (process.env.SUPABASE_URL) {
+    console.log(`[config] Loaded env from ${envFile} (SUPABASE_URL set)`);
+} else {
+    console.warn(`[config] No SUPABASE_URL in ${envFile} — match recording will be skipped`);
+}
+
 const server = defineServer({
     /**
      * Define your room handlers:
