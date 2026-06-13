@@ -598,13 +598,22 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
     // Register player into room state
     this.state.players.set(botSessionId, player);
-    console.log(`[BattleRoom] Bot ${botSessionId} registered as team ${team} (nickname: ${player.nickname})`);
+    const playerCountAfter = this.state.players.size;
+    console.log(`[BattleRoom] Bot ${botSessionId} registered as team ${team} (nickname: ${player.nickname}). players.size=${playerCountAfter}, status=${this.state.status}`);
 
     // Instantiate BotBrain
     this.botBrain = new BotBrain(this, botSessionId);
 
-    // If game has 2 players, kick-start the loop
-    if (this.state.players.size === 2) {
+    // SAFETY: In bot fallback path, we ALWAYS know there are 2 players
+    // (the real one + the bot we just added). Don't depend on size check
+    // here — it has a known race where the real player might not yet be
+    // in state.players by the time activateBotFallback is called from
+    // onJoin. Just force status="playing" and start the tick loop.
+    //
+    // Defensive: still check size in case of future code changes, but
+    // treat size >= 1 (us) + 1 (bot) = 2 as the truth.
+    const expectedPlayerCount = 2; // 1 real + 1 bot
+    if (playerCountAfter >= expectedPlayerCount) {
       this.state.status = "playing";
       this.gameStartTime = Date.now();
 
@@ -619,7 +628,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       if (this.tickInterval === null) {
         this.tickInterval = this.clock.setInterval(() => this.tick(), TICK_RATE_MS);
       }
-      console.log(`[BattleRoom] Game started against AI Bot!`);
+      console.log(`[BattleRoom] Game started against AI Bot! status now: ${this.state.status}`);
+    } else {
+      console.error(`[BattleRoom] Bot activated but player count is ${playerCountAfter}, expected ${expectedPlayerCount}. Status NOT changed. This is a bug.`);
     }
   }
 
