@@ -350,7 +350,32 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         // Skip the gate entirely for agents — they're already auth'd
         // by verify_api_key RPC during onAuth, and the human owner
         // would have redeemed the invite on the human side.
-        if (process.env.INVITE_GATE_ENABLED === "true" && !isAgentFromAuth) {
+        //
+        // BUGFIX (2026-06-14): defensive double-check. If isAgentFromAuth
+        // is false (e.g. onAuth's isAgent detection has a bug, or the
+        // env-based bypass is in play), still skip the gate if the wallet
+        // is registered as an agent wallet in the agents table. This way
+        // agents are never blocked by the invite gate, even if upstream
+        // isAgent propagation breaks.
+        let isAgentWallet = isAgentFromAuth;
+        if (!isAgentWallet && process.env.INVITE_GATE_ENABLED === "true") {
+          try {
+            const { data: agentRow, error: agentErr } = await getSupabase()
+              .from('agents')
+              .select('id')
+              .eq('agent_wallet_address', wallet.toLowerCase())
+              .maybeSingle();
+            if (!agentErr && agentRow) {
+              isAgentWallet = true;
+              console.log(`[BattleRoom] Invite gate: ${wallet} is an agent wallet (defensive check), skipping gate.`);
+            }
+          } catch (err) {
+            // DB hiccup — fall through, gate will be checked normally
+            console.warn(`[BattleRoom] Agent wallet check failed for ${wallet}: ${(err as Error).message}`);
+          }
+        }
+
+        if (process.env.INVITE_GATE_ENABLED === "true" && !isAgentWallet) {
           try {
             const { data: invite, error: inviteErr } = await getSupabase()
               .from('invite_codes')
