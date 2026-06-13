@@ -632,17 +632,38 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       })),
     });
 
-    // Record the match results to Supabase server-side for both players
-    const playerList = Array.from(this.state.players.values());
-    if (playerList.length >= 2) {
-      const p0 = playerList[0];
-      const p1 = playerList[1];
-      
-      const p0Won = this.state.winnerTeam === "0";
-      const p1Won = this.state.winnerTeam === "1";
+    // Record the match results to Supabase server-side.
+    //
+    // BUGFIX (2026-06-14): Previously called recordMatchToServerSide for
+    // BOTH players unconditionally, which caused 2 issues:
+    //   1. Bot players (0xbot_<hex>) were recorded in `match_history`
+    //      → polluted the human table with non-user rows
+    //   2. If the onAuth isAgent fix wasn't yet applied, both calls hit
+    //      the HUMAN path → agent matches ended up in profiles table
+    //
+    // New rules:
+    //   - Skip bots (wallet starts with "0xbot_") entirely. They're AI,
+    //     not real users — no need to record their stats in any table.
+    //   - Record humans + agents normally. The edge function routes
+    //     agents (isAgent=true) to agent_match_history and humans to
+    //     match_history.
+    //   - If only 1 player is left (e.g. bot match where the bot is
+    //     the only one still in the room), record just that one.
+    const playerList = Array.from(this.state.players.values())
+      .filter((p) => !p.walletAddress.startsWith("0xbot_"));
 
-      this.recordMatchToServerSide(p0, p1, this.state.elapsedSec, p0Won);
-      this.recordMatchToServerSide(p1, p0, this.state.elapsedSec, p1Won);
+    if (playerList.length >= 1) {
+      const winnerIdx = this.state.winnerTeam === "0" ? 0 : 1;
+      const loserIdx = winnerIdx === 0 ? 1 : 0;
+      const winner = playerList.find((p) => p.team === winnerIdx);
+      const loser = playerList.find((p) => p.team === loserIdx);
+
+      if (winner) {
+        this.recordMatchToServerSide(winner, loser || winner, this.state.elapsedSec, true);
+      }
+      if (loser) {
+        this.recordMatchToServerSide(loser, winner || loser, this.state.elapsedSec, false);
+      }
     }
   }
 
