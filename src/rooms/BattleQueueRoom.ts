@@ -37,6 +37,10 @@ export class BattleQueueRoom extends Room {
   private handoffs = new Map<string, InFlightHandoff>();
   // Tracks per-client matchmaking timeouts for AI Bot fallback (20 seconds)
   private matchmakingTimeouts = new Map<string, Delayed>();
+  // Tracks per-client retry count for bot fallback (max 3 attempts before
+  // giving up and sending matchmakingFailed to the client)
+  private botFallbackRetries = new Map<string, number>();
+  private static readonly MAX_BOT_FALLBACK_RETRIES = 3;
 
   onCreate(_options: any) {
     console.log(`[BattleQueue] Created`);
@@ -96,6 +100,9 @@ export class BattleQueueRoom extends Room {
       matchmakingTimeout.clear();
       this.matchmakingTimeouts.delete(client.sessionId);
     }
+
+    // Clean up bot fallback retry counter
+    this.botFallbackRetries.delete(client.sessionId);
 
     // If the client was mid-handoff, clean up so the timeout doesn't
     // fire on a session that's already gone.
@@ -224,6 +231,9 @@ export class BattleQueueRoom extends Room {
       const battleRoom = await matchMaker.createRoom("battle", { triggerBot: true });
       console.log(`[BattleQueue] Created Bot BattleRoom for ${sessionId} → room ${battleRoom.roomId}`);
 
+      // Reset retry counter on success (bot fallback worked this time)
+      this.botFallbackRetries.delete(sessionId);
+
       // 2. Reserve a seat for this player
       const reservation = await matchMaker.reserveSeatFor(battleRoom, {
         wallet: player.wallet,
@@ -237,6 +247,36 @@ export class BattleQueueRoom extends Room {
       }
     } catch (err) {
       console.error(`[BattleQueue] triggerSinglePlayerBotMatch failed:`, err);
+
+      // Increment retry counter. After MAX_BOT_FALLBACK_RETRIES failed
+      // attempts, give up gracefully and tell the client — prevents
+      // infinite loops if the game server is broken.
+      const retries = (this.botFallbackRetries.get(sessionId) ?? 0) + 1;
+      this.botFallbackRetries.set(sessionId, retries);
+
+      if (retries > BattleQueueRoom.MAX_BOT_FALLBACK_RETRIES) {
+        console.error(
+          `[BattleQueue] Bot fallback FAILED ${retries} times for ${sessionId}. ` +
+          `Giving up — sending matchmakingFailed to client.`,
+        );
+        // Tell the client the matchmaking failed so they don't sit in limbo
+        const client = this.clients.find((c) => c.sessionId === sessionId);
+        if (client) {
+          client.send("matchmakingFailed", {
+            reason: "bot_fallback_exhausted",
+            message: "Could not start a bot match after multiple attempts. " +
+                     "The game server may be overloaded. Please try again later.",
+            retries,
+          });
+          // Give the client a moment to receive the message, then leave
+          setTimeout(() => { try { void client.leave(); } catch { /* ignore */ } }, 1000);
+        }
+        this.pending.delete(sessionId);
+        this.matchmakingTimeouts.delete(sessionId);
+        this.botFallbackRetries.delete(sessionId);
+        return;
+      }
+
       // Best-effort recovery: put player back in queue and re-arm timeout
       this.pending.set(sessionId, player);
       const timeout = this.clock.setTimeout(() => {
