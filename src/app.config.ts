@@ -105,16 +105,27 @@ const server = defineServer({
                 const rooms = await matchMaker.query({
                     name: req.params.roomName,
                 });
-                const publicView = rooms.map((r: any) => ({
-                    roomId: r.roomId,
-                    name: r.name,
-                    clients: r.clients,
-                    maxClients: r.maxClients,
-                    locked: !!r.locked,
-                    private: !!r.private,
-                    metadata: r.metadata ?? {},
-                    creationTime: r.creationTime,
-                }));
+                const publicView = rooms.map((r: any) => {
+                    // Surface player + spectator counts separately so the
+                    // agent's Spectate list can show "1/2 Player 0/8 Spectator"
+                    // instead of just total clients.
+                    const playerCount = r.metadata?.playerCount ?? 0;
+                    const spectatorCount = r.metadata?.spectatorCount ?? 0;
+                    return {
+                        roomId: r.roomId,
+                        name: r.name,
+                        clients: r.clients,
+                        maxClients: r.maxClients,
+                        playerCount,
+                        spectatorCount,
+                        maxPlayers: 2,
+                        maxSpectators: 8,
+                        locked: !!r.locked,
+                        private: !!r.private,
+                        metadata: r.metadata ?? {},
+                        creationTime: r.creationTime,
+                    };
+                });
                 res.json({ rooms: publicView, count: publicView.length });
             } catch (err) {
                 res.status(500).json({ error: (err as Error).message });

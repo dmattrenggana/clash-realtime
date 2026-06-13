@@ -92,6 +92,27 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   // higher message-rate limit (the default of 30 was meant for
   // player actions like deployCard / surrender).
   private spectatorCount = 0;
+
+  /**
+   * Update the room's matchmake metadata with the current player
+   * and spectator counts. Called on every join/leave so the
+   * /rooms/battle endpoint (which surfaces matchmaker metadata)
+   * can show "{N}/2 Player {M}/8 Spectator" in the agent's
+   * Spectate list.
+   */
+  private refreshRoomMetadata(): void {
+    try {
+      this.setMetadata({
+        playerCount: this.state.players.size,
+        spectatorCount: this.spectatorCount,
+        status: this.state.status,
+        maxPlayers: 2,
+        maxSpectators: 8,
+      });
+    } catch (err) {
+      // setMetadata can throw if room is being disposed; ignore
+    }
+  }
   // Per-client message rate limit. Players get the normal 30/sec;
   // spectators get 60/sec (they only receive state patches, no
   // outgoing actions).
@@ -269,6 +290,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         spectatorCount: this.spectatorCount,
         status: this.state.status,
       });
+      // Update matchmake metadata so /rooms/battle shows the
+      // new spectator count in the agent's Spectate list.
+      this.refreshRoomMetadata();
       // No further setup. Spectators receive state automatically
       // via Colyseus's normal state-sync. handleDeployCard etc.
       // are protected by the `this.state.players.get(client.sessionId)`
@@ -380,6 +404,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     player.towers.push(t1, t2, t3);
 
     this.state.players.set(client.sessionId, player);
+    this.refreshRoomMetadata();
     console.log(`[BattleRoom] ${client.sessionId} joined (wallet: ${wallet}, team: ${team}, nickname: ${fallbackNickname})`);
 
     if (this.triggerBot) {
@@ -433,6 +458,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     //  counter underflows, which we clamp at 0.)
     if (this.spectatorCount > 0) {
       this.spectatorCount = Math.max(0, this.spectatorCount - 1);
+      this.refreshRoomMetadata();
     }
 
     // If onDrop ran first, the player was already removed by the time we get here.
@@ -658,6 +684,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
     // Register player into room state
     this.state.players.set(botSessionId, player);
+    this.refreshRoomMetadata();
     const playerCountAfter = this.state.players.size;
     console.log(`[BattleRoom] Bot ${botSessionId} registered as team ${team} (nickname: ${player.nickname}). players.size=${playerCountAfter}, status=${this.state.status}`);
 
