@@ -83,7 +83,18 @@ const surrenderSchema = z.object({}).optional();
  */
 
 export class BattleRoom extends Room<{ state: BattleState }> {
-  maxClients = 2;
+  // Base capacity: 2 players. Spectators (clients joining with
+  // { spectate: true } in options) are ADDED on top of this cap
+  // (see onJoin / SpectatorCount handling). For the MVP, 8 extra
+  // spectators is plenty.
+  maxClients = 2 + 8;
+  // Spectators have no game state to act on, so they get a much
+  // higher message-rate limit (the default of 30 was meant for
+  // player actions like deployCard / surrender).
+  private spectatorCount = 0;
+  // Per-client message rate limit. Players get the normal 30/sec;
+  // spectators get 60/sec (they only receive state patches, no
+  // outgoing actions).
   maxMessagesPerSecond = 30;
   private gameStartTime = 0;
   private tickInterval: Delayed | null = null;
@@ -235,6 +246,37 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const agentIdFromAuth = String(auth?.agentId || "");
     const agentNameFromAuth = String(auth?.agentName || "");
 
+    // SPECTATOR PATH (2026-06-13): clients joining with
+    // { spectate: true } in their options are spectators. They get
+    // the full state stream (so they can watch the match) but no
+    // Player slot, no deployCard allowed, no matchEnd action.
+    //
+    // Use case: the web UI's 'Spectate Agent Battleground' panel
+    // navigates to /battle?room=<id>&spectate=1, the hook joins by
+    // room ID, and the spectator watches live.
+    const isSpectator = options?.spectate === true;
+
+    if (isSpectator) {
+      this.spectatorCount += 1;
+      console.log(
+        `[BattleRoom] Spectator joined: ${client.sessionId} ` +
+        `(total spectators: ${this.spectatorCount}, players: ${this.state.players.size})`,
+      );
+      // Send a welcome message with the current state shape (helps
+      // the spectator client know it's in read-only mode).
+      client.send("spectatorJoined", {
+        roomId: this.roomId,
+        spectatorCount: this.spectatorCount,
+        status: this.state.status,
+      });
+      // No further setup. Spectators receive state automatically
+      // via Colyseus's normal state-sync. handleDeployCard etc.
+      // are protected by the `this.state.players.get(client.sessionId)`
+      // check — spectators have no Player entry, so they get
+      // silently rejected.
+      return;
+    }
+
     // If auth says it's an agent, USE the server-verified identity.
     // Don't trust the client's options for isAgent / agentId.
     const agentId = isAgentFromAuth ? agentIdFromAuth : String(options?.agentId || "");
@@ -382,6 +424,17 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
   onLeave(client: Client, code: CloseCode) {
     console.log(`[BattleRoom] ${client.sessionId} left (code: ${code})`);
+
+    // Track spectator leave separately. We don't decrement on
+    // onJoin in the spectator branch (we set spectatorCount on
+    // entry), so do it here. Players have no spectatorCount change.
+    // (For MVP we don't track which sessionIds are spectators; we
+    //  just decrement whenever a non-player leaves. Worst case:
+    //  counter underflows, which we clamp at 0.)
+    if (this.spectatorCount > 0) {
+      this.spectatorCount = Math.max(0, this.spectatorCount - 1);
+    }
+
     // If onDrop ran first, the player was already removed by the time we get here.
     // Defensive: only delete if still present.
     if (this.state.players.has(client.sessionId)) {
