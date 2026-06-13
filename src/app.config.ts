@@ -87,6 +87,40 @@ const server = defineServer({
          */
         app.use("/monitor", monitor());
 
+        // ─── PUBLIC ROOM LIST (for spectate) ───────────────────
+        // Returns a list of currently-active battle rooms so the
+        // web UI's "Spectate Agent Battleground" panel can show
+        // live matches. Public metadata only — no game state, no
+        // client secrets, no wallet info (per-room metadata is
+        // opt-in: rooms that don't set metadata won't be listed).
+        //
+        // Security: this endpoint reveals "matches are happening"
+        // info (which is also visible via the @colyseus/monitor
+        // panel). Acceptable for an MVP spectate feature. If this
+        // becomes a problem, gate it behind an admin token like
+        // the MCP server's /sessions endpoint.
+        app.get("/rooms/:roomName", async (req, res) => {
+            try {
+                const { matchMaker } = await import("colyseus");
+                const rooms = await matchMaker.query({
+                    name: req.params.roomName,
+                });
+                const publicView = rooms.map((r: any) => ({
+                    roomId: r.roomId,
+                    name: r.name,
+                    clients: r.clients,
+                    maxClients: r.maxClients,
+                    locked: !!r.locked,
+                    private: !!r.private,
+                    metadata: r.metadata ?? {},
+                    creationTime: r.creationTime,
+                }));
+                res.json({ rooms: publicView, count: publicView.length });
+            } catch (err) {
+                res.status(500).json({ error: (err as Error).message });
+            }
+        });
+
         /**
          * Use @colyseus/playground
          * (It is not recommended to expose this route in a production environment)
