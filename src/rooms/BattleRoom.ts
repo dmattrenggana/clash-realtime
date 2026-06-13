@@ -114,6 +114,49 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (!token) {
       throw new Error("Missing auth token");
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // AGENT API KEY AUTH (clash-mcp-server flow)
+    // ═══════════════════════════════════════════════════════════════
+    // Detect agent API keys (format: "clash_" + 64 hex chars).
+    // Verify by calling the verify_api_key RPC which does bcrypt
+    // comparison against the stored hash. On success, the RPC
+    // returns the agent's identity (agent_id, agent_wallet, etc.).
+    if (token.startsWith("clash_")) {
+      try {
+        const { data, error } = await getSupabase().rpc("verify_api_key", {
+          p_api_key: token,
+        });
+        if (error) {
+          console.warn(`[BattleRoom] verify_api_key RPC error:`, error.message);
+          throw new Error(`Agent auth failed: ${error.message}`);
+        }
+        if (!data || data.length === 0) {
+          throw new Error("Invalid or expired agent API key");
+        }
+        const agent = data[0];
+        if (!agent.is_active) {
+          throw new Error("Agent is deactivated");
+        }
+        console.log(`[BattleRoom] Agent auth OK: ${agent.agent_name} (${agent.agent_id})`);
+        // Return the agent's own EVM wallet as the authoritative identity.
+        // isAgent and agentId are stashed in auth for BattleRoom.onJoin to read.
+        return {
+          userId: agent.agent_id,
+          wallet: agent.agent_wallet_address ?? agent.wallet_address,
+          isAgent: true,
+          agentId: agent.agent_id,
+          agentName: agent.agent_name,
+          ownerWalletAddress: agent.owner_wallet_address,
+        };
+      } catch (err) {
+        throw new Error(`Agent auth failed: ${(err as Error).message}`);
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // HUMAN PRIVY JWT AUTH (web UI flow)
+    // ═══════════════════════════════════════════════════════════════
     try {
       // verifyAuthToken handles JWKS fetch, signature check, and expiration.
       const claims = await getPrivy().verifyAuthToken(token);
@@ -185,14 +228,21 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   }
 
   onJoin(client: Client, options: any, auth?: any) {
-    // Ambil wallet dari auth (Privy) atau options, pastikan string
+    // SECURITY: prefer server-verified auth values over client-sent options.
+    // For agents: auth.isAgent + auth.agentId are from the verify_api_key RPC.
+    // For humans: auth.wallet is from the verified Privy user object.
+    const isAgentFromAuth = auth?.isAgent === true;
+    const agentIdFromAuth = String(auth?.agentId || "");
+    const agentNameFromAuth = String(auth?.agentName || "");
+
+    // If auth says it's an agent, USE the server-verified identity.
+    // Don't trust the client's options for isAgent / agentId.
+    const agentId = isAgentFromAuth ? agentIdFromAuth : String(options?.agentId || "");
+
+    // Ambil wallet dari auth (server-verified) atau options, pastikan string
     const wallet = String(auth?.wallet || options?.wallet || "anonymous");
     // Fallback awal (tidak dipercaya 100%)
     const fallbackNickname = String(options?.nickname || "Anonymous");
-    // MCP agent identification (optional — only set when an AI agent
-    // joined via clash-mcp-server). See Player schema for the routing
-    // implications in endMatch.
-    const agentId = String(options?.agentId || "");
 
     const team = this.state.players.size;
     const player = new Player();
