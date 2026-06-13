@@ -583,7 +583,31 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const cardsDeployed = this.cardsDeployed.get(player.walletAddress) || 0;
     const totalDamageDealt = Math.floor(this.totalDamageDealt.get(player.walletAddress) || 0);
 
-    console.log(`[BattleRoom] Attempting to record match server-side for wallet: ${playerWallet} (isWinner: ${isWinner}, isAgent: ${player.isAgent})...`);
+    // DEFENSIVE CHECK (2026-06-14): Don't trust player.isAgent — it can be
+    // false if onAuth's detection has a bug or the env-based bypass
+    // leaked through. Query the agents table (source of truth) for the
+    // wallet. If found, override isAgent + agentId. This guarantees
+    // agents always go to record_agent_match, never to the human path.
+    let isAgentForRecord = player.isAgent;
+    let agentIdForRecord: string | null = player.agentId || null;
+    if (!isAgentForRecord && playerWallet && !playerWallet.startsWith("0xbot_")) {
+      try {
+        const { data: agentRow, error: agentErr } = await getSupabase()
+          .from('agents')
+          .select('id')
+          .eq('agent_wallet_address', playerWallet.toLowerCase())
+          .maybeSingle();
+        if (!agentErr && agentRow) {
+          isAgentForRecord = true;
+          agentIdForRecord = agentRow.id;
+          console.log(`[BattleRoom] Defensive check: ${playerWallet} is an agent (id=${agentRow.id}) — routing to record_agent_match.`);
+        }
+      } catch (err) {
+        console.warn(`[BattleRoom] Defensive agent check failed for ${playerWallet}: ${(err as Error).message}. Falling back to player.isAgent=${player.isAgent}.`);
+      }
+    }
+
+    console.log(`[BattleRoom] Attempting to record match server-side for wallet: ${playerWallet} (isWinner: ${isWinner}, isAgent: ${isAgentForRecord})...`);
 
     try {
       const response = await fetch(`${supabaseUrl}/functions/v1/record-match`, {
@@ -604,8 +628,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           // MCP agent battleground: if this player joined via clash-mcp-server,
           // the edge function routes the match to record_agent_match instead
           // of secure_record_match. The human's profile is NOT updated.
-          isAgent: player.isAgent,
-          agentId: player.agentId || null,
+          // isAgentForRecord comes from defensive DB check above — robust
+          // against onAuth bugs that leave player.isAgent as false.
+          isAgent: isAgentForRecord,
+          agentId: agentIdForRecord,
         })
       });
 
