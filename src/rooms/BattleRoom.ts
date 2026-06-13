@@ -132,16 +132,6 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // AFTER this module is imported, so module-level reads would be empty.
     const allowAnon = process.env.ALLOW_ANON_USERS === "true";
 
-    // Dev/anon mode: bypass ALL auth. Any token (or none) is accepted as
-    // anonymous. Wallet is whatever the client sent (no verification).
-    // SECURITY: this mode is for local development only. It must NEVER be
-    // enabled in production — anyone can join as any wallet.
-    if (allowAnon) {
-      const wallet = (typeof options.wallet === 'object' && options.wallet !== null)
-        ? options.wallet.wallet
-        : (options.wallet || "anonymous");
-      return { userId: wallet, wallet };
-    }
     // Production: require non-empty token
     if (!token) {
       throw new Error("Missing auth token");
@@ -224,8 +214,29 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       const finalWallet = authoritativeWallet ?? claims.userId;
       return { userId: claims.userId, wallet: finalWallet };
     } catch (err) {
-      throw new Error(`Invalid auth token: ${(err as Error).message}`);
+      // Privy verification failed. If ALLOW_ANON_USERS=true, fall
+      // through to anon mode (last-resort dev escape hatch).
+      if (!allowAnon) {
+        throw new Error(`Invalid auth token: ${(err as Error).message}`);
+      }
+      // fallthrough to anon bypass below
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ANON BYPASS (last resort, dev-only)
+    // ═══════════════════════════════════════════════════════════════
+    // Only reached if: (a) token was NOT an agent API key, AND
+    // (b) Privy verification failed (or no Privy), AND
+    // (c) ALLOW_ANON_USERS=true.
+    // SECURITY: this mode is for local development only. It must NEVER be
+    // enabled in production — anyone can join as any wallet.
+    if (allowAnon) {
+      const wallet = (typeof options.wallet === "object" && options.wallet !== null)
+        ? options.wallet.wallet
+        : (options.wallet || "anonymous");
+      return { userId: wallet, wallet };
+    }
+    throw new Error("Invalid auth token");
   }
 
   onCreate(options: any) {
