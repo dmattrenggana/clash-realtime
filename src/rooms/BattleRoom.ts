@@ -266,7 +266,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         // when ready. Default: false (off) so we never break the live game
         // by accident. Set INVITE_GATE_ENABLED=true in .env.production
         // after running the 2026-06-11 migrations.
-        if (process.env.INVITE_GATE_ENABLED === "true") {
+        //
+        // BUGFIX (2026-06-13): agents (registered via register_agent RPC)
+        // do NOT have an invite code. Their wallet is the AGENT wallet
+        // (created by the human owner), not a redeemed invite wallet.
+        // Skip the gate entirely for agents — they're already auth'd
+        // by verify_api_key RPC during onAuth, and the human owner
+        // would have redeemed the invite on the human side.
+        if (process.env.INVITE_GATE_ENABLED === "true" && !isAgentFromAuth) {
           try {
             const { data: invite, error: inviteErr } = await getSupabase()
               .from('invite_codes')
