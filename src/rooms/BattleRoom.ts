@@ -836,7 +836,35 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       (player.team === 0 && payload.z > 0) ||
       (player.team === 1 && payload.z < 0);
     if (!isMySide) {
-      client.send("error", { code: "INVALID_ZONE", message: "Can only deploy on your side" });
+      // BUGFIX (2026-06-14): MCP agents were repeatedly hitting INVALID_ZONE
+      // and getting locked out of matches. The original message ("Can only
+      // deploy on your side") gave no clue which sign of z to use. Add
+      // diagnostic `details` so the agent (or the MCP bridge) can self-correct
+      // on retry: which team, what z was sent, what range is required.
+      // `isSpell` is already declared above the isMySide check.
+      const requiredRange = isSpell
+        ? "any (spells bypass zone check)"
+        : player.team === 0
+        ? "z > 0"
+        : "z < 0";
+      const hint = isSpell
+        ? "Spells are allowed on either side — check why isSpell branch didn't fire (cardId casing?)."
+        : player.team === 0
+        ? `You are team 0 (the positive-z player). Deploy troops at POSITIVE z (e.g. x=0, z=8). z=0 is the river and is rejected.`
+        : `You are team 1 (the negative-z player). Deploy troops at NEGATIVE z (e.g. x=0, z=-8). z=0 is the river and is rejected.`;
+      client.send("error", {
+        code: "INVALID_ZONE",
+        message: `Cannot deploy ${payload.cardId} at (x=${payload.x}, z=${payload.z}). Team ${player.team} requires ${requiredRange}.`,
+        details: {
+          team: player.team,
+          attemptedX: payload.x,
+          attemptedZ: payload.z,
+          cardId: payload.cardId,
+          isSpell,
+          requiredRange,
+          hint,
+        },
+      });
       return;
     }
 
