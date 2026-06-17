@@ -9,18 +9,17 @@ export const ELIXIR_REGEN_PER_SEC = 1 / 2.8;
 // The numbers in the constants below used to be a separate balance
 // table; the source of truth for unit combat is now the client-side
 // `clash-client/src/game/cards.ts:CARDS` table (so designers tune in
-// one place). DPS is recomputed as round(damage / attack_speed) for
-// internal consistency. Healer.damage is now 15 — the healer is
-// custom-AI'd in `behaviors.ts:processHealerAI` and uses this value
-// as the heal amount per tick (heals 15 HP every 2.0s, splash 1.8).
-export const CARD_DPS: Record<string, number> = {
-  knight: 21, archer: 17, giant: 17, wyvern: 18, wizard: 21,
-  goblin: 14, barbarian: 19, healer: 8, gunslinger: 40,
-  barrel_bomb: 0, meteor: 0, incubus: 13,
-};
+// one place). Healer.damage is now 15 — the healer is custom-AI'd
+// in `behaviors.ts:processHealerAI` and uses this value as the heal
+// amount per tick (heals 15 HP every 1.8s, splash 1.8).
+//
+// NOTE: CARD_DPS used to live here as round(damage / attack_speed)
+// but was never imported anywhere in src/. Removed 2026-06-17 to
+// avoid drift / false sense of authority. If you need DPS, compute
+// it inline from CARD_ATTACK_DAMAGE / CARD_ATTACK_SPEED.
 
 // --- Discrete Combat Constants ---
-// Attack cooldown in seconds. e.g., Archer attacks once every 1.2s
+// Attack cooldown in seconds. e.g., Archer attacks once every 0.8s
 export const CARD_ATTACK_SPEED: Record<string, number> = {
   knight: 1.2, archer: 0.8, giant: 1.5, wyvern: 1.4, wizard: 1.2,
   goblin: 1.0, barbarian: 1.3, healer: 1.8, gunslinger: 1.0,
@@ -136,8 +135,7 @@ export const SPELL_TRIGGER_RADIUS: Record<string, number> = {
   barrel_bomb: 2.0,
 };
 
-/** Per-tick damage value (CARD_DPS[cardId] is per-second; here we
- *  apply the full cardDPS once on detonation). */
+/** Spell damage applied once on detonation. */
 export const SPELL_DAMAGE: Record<string, number> = {
   meteor: 70,
   barrel_bomb: 55,
