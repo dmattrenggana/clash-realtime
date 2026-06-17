@@ -22,9 +22,9 @@ export const CARD_DPS: Record<string, number> = {
 // --- Discrete Combat Constants ---
 // Attack cooldown in seconds. e.g., Archer attacks once every 1.2s
 export const CARD_ATTACK_SPEED: Record<string, number> = {
-  knight: 1.2, archer: 1.2, giant: 1.5, wyvern: 1.4, wizard: 1.4,
-  goblin: 1.1, barbarian: 1.3, healer: 2.0, gunslinger: 1.0,
-  barrel_bomb: 0, meteor: 0, incubus: 1.2,
+  knight: 1.2, archer: 0.8, giant: 1.5, wyvern: 1.4, wizard: 1.2,
+  goblin: 1.0, barbarian: 1.3, healer: 1.8, gunslinger: 1.0,
+  barrel_bomb: 0, meteor: 0, incubus: 1.0,
 };
 
 // Attack damage per hit. Mirrors client CARDS[cardId].damage.
