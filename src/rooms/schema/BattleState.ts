@@ -5,10 +5,18 @@ export const INITIAL_TOWER_HP = { king: 500, princess: 350 };
 export const MAX_DURATION = 600;
 export const ELIXIR_REGEN_PER_SEC = 1 / 2.8;
 
+// BUGFIX (2026-06-17): apply client card stats to server.
+// The numbers in the constants below used to be a separate balance
+// table; the source of truth for unit combat is now the client-side
+// `clash-client/src/game/cards.ts:CARDS` table (so designers tune in
+// one place). DPS is recomputed as round(damage / attack_speed) for
+// internal consistency. Healer.damage is now 15 — the healer is
+// custom-AI'd in `behaviors.ts:processHealerAI` and uses this value
+// as the heal amount per tick (heals 15 HP every 2.0s, splash 1.8).
 export const CARD_DPS: Record<string, number> = {
-  knight: 25, archer: 20, giant: 25, wyvern: 25, wizard: 30,
-  goblin: 15, barbarian: 25, healer: 0, gunslinger: 40,
-  barrel_bomb: 55, meteor: 70, incubus: 15,
+  knight: 21, archer: 17, giant: 17, wyvern: 18, wizard: 21,
+  goblin: 14, barbarian: 19, healer: 8, gunslinger: 40,
+  barrel_bomb: 0, meteor: 0, incubus: 13,
 };
 
 // --- Discrete Combat Constants ---
@@ -19,18 +27,18 @@ export const CARD_ATTACK_SPEED: Record<string, number> = {
   barrel_bomb: 0, meteor: 0, incubus: 1.2,
 };
 
-// Attack damage per hit. (Calculated roughly as DPS * ATTACK_SPEED for existing balance)
+// Attack damage per hit. Mirrors client CARDS[cardId].damage.
 export const CARD_ATTACK_DAMAGE: Record<string, number> = {
-  knight: 30, archer: 24, giant: 38, wyvern: 35, wizard: 42,
-  goblin: 17, barbarian: 33, healer: 0, gunslinger: 40, // Healer does negative damage (heal) or handles it in custom logic
-  barrel_bomb: 55, meteor: 70, incubus: 18,
+  knight: 25, archer: 20, giant: 25, wyvern: 25, wizard: 30,
+  goblin: 15, barbarian: 25, healer: 15, gunslinger: 40,
+  barrel_bomb: 55, meteor: 70, incubus: 15,
 };
 
-// Attack Range in units
+// Attack Range in units. Mirrors client CARDS[cardId].range.
 export const CARD_RANGE: Record<string, number> = {
-  knight: 1.4, archer: 4.5, giant: 1.5, wyvern: 3.5, wizard: 4.0,
-  goblin: 1.3, barbarian: 1.4, healer: 3.5, gunslinger: 5.0,
-  barrel_bomb: 0, meteor: 0, incubus: 1.2,
+  knight: 1.5, archer: 5.0, giant: 2.0, wyvern: 6.0, wizard: 4.5,
+  goblin: 1.5, barbarian: 1.5, healer: 4.5, gunslinger: 5.5,
+  barrel_bomb: 1.2, meteor: 1.5, incubus: 2.0,
 };
 
 // Projectile speed (units per second). If 0, the attack is melee/instant and spawns no projectile.
@@ -47,10 +55,11 @@ export const CARD_ATTACK_SPLASH: Record<string, number> = {
   barrel_bomb: 0, meteor: 0, incubus: 0,
 };
 
+// Hit-points per card. Mirrors client CARDS[cardId].hp.
 export const CARD_HP: Record<string, number> = {
-  knight: 600, archer: 250, giant: 2000, wyvern: 500, wizard: 350,
-  goblin: 150, barbarian: 500, healer: 400, gunslinger: 350,
-  barrel_bomb: 200, meteor: 1, incubus: 400,
+  knight: 150, archer: 120, giant: 400, wyvern: 120, wizard: 100,
+  goblin: 60, barbarian: 180, healer: 110, gunslinger: 110,
+  barrel_bomb: 45, meteor: 1, incubus: 60,
 };
 
 export const CARD_COST: Record<string, number> = {
