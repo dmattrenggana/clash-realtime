@@ -82,9 +82,9 @@ export const CARD_COST: Record<string, number> = {
 // filtered out of the movement tick at gameLoop.ts:83, but the
 // value documents the intent).
 export const CARD_MOVE_SPEED: Record<string, number> = {
-  knight: 2.5, archer: 2.5, giant: 1.5, wyvern: 3.5, wizard: 2.5,
-  goblin: 3.5, barbarian: 2.5, healer: 2.0, gunslinger: 2.5,
-  barrel_bomb: 0, meteor: 0, incubus: 3.0,
+  knight: 2.5, archer: 3.0, giant: 1.5, wyvern: 2.5, wizard: 2.5,
+  goblin: 3.5, barbarian: 2.5, healer: 2.0, gunslinger: 3.0,
+  barrel_bomb: 0, meteor: 0, incubus: 3.5,
 };
 
 export const CARD_SPAWN_COUNT: Record<string, number> = {
