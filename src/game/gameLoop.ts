@@ -1,5 +1,5 @@
 import { BattleState, Player, DeployedUnit, Tower, SPELL_CARDS, FLYING_UNITS, CAN_ATTACK_AIR, CARD_PROJECTILE_SPEED, ELIXIR_REGEN_PER_SEC, MAX_DURATION } from "../rooms/schema/BattleState.js";
-import { CARD_RANGE } from "../rooms/schema/BattleState.js";
+import { CARD_RANGE, CARD_MOVE_SPEED } from "../rooms/schema/BattleState.js";
 import { getTowerCoords, routeThroughBridge } from "./pathfinding.js";
 import { applySeparationForces, applyRiverConstraint, applyTowerCollisions } from "./physics.js";
 import { processHealerAI, processSpells } from "./behaviors.js";
@@ -226,7 +226,7 @@ function moveUnits(state: BattleState, tickRateMs: number): void {
         const distToRoute = Math.sqrt(dx * dx + dz * dz);
         
         if (distToRoute > 0.001) {
-          const speed = 2.5;
+          const speed = CARD_MOVE_SPEED[unit.cardId] ?? 2.5;
           const moveStep = (speed * tickRateMs) / 1000;
           const actualStep = Math.min(moveStep, distToRoute);
           
