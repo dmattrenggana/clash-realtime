@@ -73,6 +73,20 @@ export const CARD_COST: Record<string, number> = {
   barrel_bomb: 2, meteor: 3, incubus: 2,
 };
 
+// BUGFIX (2026-06-17): movement speed per-card (units per second).
+// Previously hardcoded to 2.5 for every unit in gameLoop.ts:229,
+// which meant a 2000-HP Giant moved at the same pace as a 60-HP
+// Goblin. Splitting this per-card lets balance match the
+// visual archetype: giants are slow tanks, goblins are fast
+// harassers, wyverns are fast air. Spells are 0 (they're already
+// filtered out of the movement tick at gameLoop.ts:83, but the
+// value documents the intent).
+export const CARD_MOVE_SPEED: Record<string, number> = {
+  knight: 2.5, archer: 2.5, giant: 1.5, wyvern: 3.5, wizard: 2.5,
+  goblin: 3.5, barbarian: 2.5, healer: 2.0, gunslinger: 2.5,
+  barrel_bomb: 0, meteor: 0, incubus: 3.0,
+};
+
 export const CARD_SPAWN_COUNT: Record<string, number> = {
   knight: 1, archer: 1, giant: 1, wyvern: 1, wizard: 1,
   goblin: 3, barbarian: 1, healer: 1, gunslinger: 1,
