@@ -55,11 +55,16 @@ export const CARD_ATTACK_SPLASH: Record<string, number> = {
   barrel_bomb: 0, meteor: 0, incubus: 0,
 };
 
-// Hit-points per card. Mirrors client CARDS[cardId].hp.
+// Hit-points per card. Mirrors client CARDS[cardId].hp, except
+// barrel_bomb which we keep at 1 like meteor — spells are
+// invulnerable & untargetable by construction (SPELL_CARDS check
+// in combat.ts:22/41/266 and gameLoop.ts:96/169), so their HP
+// is purely cosmetic and matched to meteor's 1 for visual
+// consistency.
 export const CARD_HP: Record<string, number> = {
   knight: 150, archer: 120, giant: 400, wyvern: 120, wizard: 100,
   goblin: 60, barbarian: 180, healer: 110, gunslinger: 110,
-  barrel_bomb: 45, meteor: 1, incubus: 60,
+  barrel_bomb: 1, meteor: 1, incubus: 60,
 };
 
 export const CARD_COST: Record<string, number> = {
