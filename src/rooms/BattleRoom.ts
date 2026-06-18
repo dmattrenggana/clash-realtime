@@ -436,7 +436,20 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       this.state.players.delete(client.sessionId);
     }
     if (this.state.status === "playing" && this.state.players.size < 2) {
-      this.endMatch();
+      // BUGFIX (2026-06-18): When the opponent leaves mid-match, the
+      // remaining player was seeing "Defeat" in the UI because
+      // `winnerTeam` was still the default empty string. Set it to
+      // the remaining player's team so the UI shows "Victory", and
+      // pass "opponent_left" to endMatch so the server records this
+      // as a walkover: no trophy/XP changes, $CLASH reward is
+      // blocked (is_reward_eligible=false). Prevents farming attacks
+      // where malicious users create sock-puppets to deliberately
+      // disconnect and claim rewards.
+      const remaining = Array.from(this.state.players.values())[0];
+      if (remaining) {
+        this.state.winnerTeam = String(remaining.team);
+      }
+      this.endMatch("opponent_left");
     }
   }
 
@@ -496,11 +509,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       this.gameStartTime,
       TICK_RATE_MS,
       (attackerTeam, damage) => this.trackDamage(attackerTeam, damage),
-      (winner) => this.endMatch()
+      (winner) => this.endMatch("normal")
     );
   }
 
-  private async recordMatchToServerSide(player: Player, enemy: Player, duration: number, isWinner: boolean) {
+  private async recordMatchToServerSide(player: Player, enemy: Player, duration: number, isWinner: boolean, matchEndReason: "normal" | "surrender" | "opponent_left" = "normal") {
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     const gameServerSecret = process.env.GAME_SERVER_SECRET;
@@ -558,6 +571,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           totalDamageDealt,
           playerWallet,
           outcome: isWinner ? "victory" : "defeat",
+          // Match end reason: "normal" (tower destroyed), "surrender",
+          // or "opponent_left" (other player disconnected mid-match).
+          // For "opponent_left" the server records the match with
+          // is_reward_eligible=false and skips trophy/XP changes, so
+          // $CLASH claim RPC rejects it. Prevents sock-puppet farming.
+          matchEndReason,
           // MCP agent battleground: if this player joined via clash-mcp-server,
           // the edge function routes the match to record_agent_match instead
           // of secure_record_match. The human's profile is NOT updated.
@@ -597,18 +616,21 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     }
   }
 
-  private endMatch() {
+  private endMatch(reason: "normal" | "surrender" | "opponent_left" = "normal") {
     if (this.state.status === "ended") return; // idempotent guard
     this.state.status = "ended";
     if (this.tickInterval !== null) {
       this.tickInterval.clear();
       this.tickInterval = null;
     }
-    console.log(`[BattleRoom] Match ended. Winner: ${this.state.winnerTeam}`);
+    console.log(`[BattleRoom] Match ended. Winner: ${this.state.winnerTeam} (reason: ${reason})`);
 
     this.broadcast("matchEnd", {
       winnerTeam: this.state.winnerTeam,
       duration: this.state.elapsedSec,
+      // 2026-06-18: include end reason so the client can hide the
+      // $CLASH Claim button for walkovers (opponent_left).
+      matchEndReason: reason,
       players: Array.from(this.state.players.values()).map((p) => ({
         wallet: p.walletAddress,
         team: p.team,
@@ -643,10 +665,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       const loser = playerList.find((p) => p.team === loserIdx);
 
       if (winner) {
-        this.recordMatchToServerSide(winner, loser || winner, this.state.elapsedSec, true);
+        this.recordMatchToServerSide(winner, loser || winner, this.state.elapsedSec, true, reason);
       }
       if (loser) {
-        this.recordMatchToServerSide(loser, winner || loser, this.state.elapsedSec, false);
+        this.recordMatchToServerSide(loser, winner || loser, this.state.elapsedSec, false, reason);
       }
     }
   }
@@ -838,7 +860,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     );
     if (opponent) {
       this.state.winnerTeam = String(opponent.team);
-      this.endMatch();
+      this.endMatch("surrender");
     }
   }
 
