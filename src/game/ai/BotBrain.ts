@@ -72,6 +72,26 @@ export class BotBrain {
     const shuffledDeck = [...this.deck].sort(() => Math.random() - 0.5);
     this.hand = shuffledDeck.slice(0, 4);
     this.queue = shuffledDeck.slice(4, 8);
+
+    // 2026-06-24 FIX: server now enforces Battle Deck validation in
+    // handleDeployCard (NO_BATTLE_DECK / CARD_NOT_IN_DECK). The bot Player
+    // created in BattleRoom.activateBotFallback() never goes through the
+    // onJoin deck-load path, so its player.deck stayed empty and every bot
+    // deploy was being rejected -> bot looked frozen. Mirror the selected
+    // deck into the bot Player schema (default level 1; the bot owns no NFTs,
+    // so no on-chain ownership/level lookup is needed).
+    const botPlayer = this.room.state.players.get(this.botSessionId);
+    if (botPlayer) {
+      botPlayer.deck.clear();
+      botPlayer.deckLevels.clear();
+      for (const cardId of this.deck) {
+        botPlayer.deck.push(cardId);
+        botPlayer.deckLevels.push(1);
+      }
+      console.log();
+    } else {
+      console.warn();
+    }
   }
 
   /**
