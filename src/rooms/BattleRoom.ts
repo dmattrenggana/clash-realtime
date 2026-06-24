@@ -331,19 +331,41 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     player.isAgent = agentId.length > 0;
     player.agentId = agentId;
 
-    // 2026-06-24: Battle Deck NFT validation BEFORE adding player to state.
-    // If we add the player first, the client can deploy before the async
-    // deck load completes (~300-500ms via on-chain multicall) and hit
-    // NO_BATTLE_DECK / CARD_NOT_IN_DECK rejection.
+    // CRITICAL: Add player to state.players SYNCHRONOUSLY before any await.
+    // Otherwise concurrent joins both see state.players.size=0 and get
+    // team=0 (race condition). The team assignment must happen during the
+    // synchronous portion of onJoin.
+
+    const t1 = new Tower();
+    t1.uid = randomBytes(4).toString("hex");
+    t1.team = team;
+    t1.type = "princess";
+    t1.hp = INITIAL_TOWER_HP.princess;
+    t1.maxHp = INITIAL_TOWER_HP.princess;
+    const t2 = new Tower();
+    t2.uid = randomBytes(4).toString("hex");
+    t2.team = team;
+    t2.type = "king";
+    t2.hp = INITIAL_TOWER_HP.king;
+    t2.maxHp = INITIAL_TOWER_HP.king;
+    const t3 = new Tower();
+    t3.uid = randomBytes(4).toString("hex");
+    t3.team = team;
+    t3.type = "princess";
+    t3.hp = INITIAL_TOWER_HP.princess;
+    t3.maxHp = INITIAL_TOWER_HP.princess;
+    player.towers.push(t1, t2, t3);
+
+    this.state.players.set(client.sessionId, player);
+    this.refreshRoomMetadata();
+    console.log(`[BattleRoom] ${client.sessionId} joined (wallet: ${wallet}, team: ${team}, nickname: ${fallbackNickname})`);
+
+    // 2026-06-24: Battle Deck NFT validation AFTER adding player to state.
+    // (Deck comes from client options, not DB — verified on-chain via ClashCards.balanceOf.)
     //
-    // Architecture: deck comes from the CLIENT (not DB). The DB has no
-    // selected_battle_deck column anymore. Client sends their 8 selected
-    // cards via auth.deck (set by matchmaking) or options.deck. Server
-    // validates them on-chain via ClashCards.balanceOf.
-    //
-    // To avoid blocking matchmaking forever, we race the on-chain query
-    // with a 5s timeout. If it fails, the player joins with empty deck
-    // (cannot deploy anything) — better than crashing on join.
+    // If the on-chain query is slow, the player can already see the arena
+    // but can't deploy until the deck loads. handleDeployCard rejects
+    // with NO_BATTLE_DECK if player.deck is empty, so this is safe.
     const clientDeck: string[] =
       Array.isArray(auth?.deck) ? auth.deck :
       Array.isArray(options?.deck) ? options.deck :
@@ -397,7 +419,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           }
         })();
 
-const timeoutPromise = new Promise<void>((_, reject) =>
+        const timeoutPromise = new Promise<void>((_, reject) =>
           setTimeout(() => reject(new Error('deck load timeout (10s)')), 10000)
         );
 
@@ -412,30 +434,6 @@ const timeoutPromise = new Promise<void>((_, reject) =>
         console.warn(`[BattleRoom] ${wallet} will join with empty deck (cannot deploy)`);
       }
     }
-
-    const t1 = new Tower();
-    t1.uid = randomBytes(4).toString("hex");
-    t1.team = team;
-    t1.type = "princess";
-    t1.hp = INITIAL_TOWER_HP.princess;
-    t1.maxHp = INITIAL_TOWER_HP.princess;
-    const t2 = new Tower();
-    t2.uid = randomBytes(4).toString("hex");
-    t2.team = team;
-    t2.type = "king";
-    t2.hp = INITIAL_TOWER_HP.king;
-    t2.maxHp = INITIAL_TOWER_HP.king;
-    const t3 = new Tower();
-    t3.uid = randomBytes(4).toString("hex");
-    t3.team = team;
-    t3.type = "princess";
-    t3.hp = INITIAL_TOWER_HP.princess;
-    t3.maxHp = INITIAL_TOWER_HP.princess;
-    player.towers.push(t1, t2, t3);
-
-    this.state.players.set(client.sessionId, player);
-    this.refreshRoomMetadata();
-    console.log(`[BattleRoom] ${client.sessionId} joined (wallet: ${wallet}, team: ${team}, nickname: ${fallbackNickname})`);
 
     // Start match if both players are in or bot fallback is queued.
     if (this.triggerBot) {
