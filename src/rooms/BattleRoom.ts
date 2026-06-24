@@ -397,13 +397,18 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           }
         })();
 
-        const timeoutPromise = new Promise<void>((_, reject) =>
-          setTimeout(() => reject(new Error('deck load timeout')), 5000)
+const timeoutPromise = new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error('deck load timeout (10s)')), 10000)
         );
 
         await Promise.race([Promise.all([nicknamePromise, deckValidatePromise]), timeoutPromise]);
       } catch (err) {
-        console.error(`[BattleRoom] Deck validation failed for ${wallet}:`, (err as Error).message);
+        const msg = (err as Error).message;
+        console.error(`[BattleRoom] Deck validation failed for ${wallet}:`, msg);
+        if (msg.includes('rate limit') || msg.includes('429')) {
+          console.error(`[BattleRoom] ⚠️  Public RPC (mainnet.base.org) is rate-limited. ` +
+            `Set BASE_RPC_URL env var to a private RPC (Alchemy/Infura/QuickNode) to fix.`);
+        }
         console.warn(`[BattleRoom] ${wallet} will join with empty deck (cannot deploy)`);
       }
     }

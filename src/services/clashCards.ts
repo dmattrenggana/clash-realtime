@@ -96,6 +96,25 @@ export interface CardOwnership {
 }
 
 /**
+ * In-memory TTL cache for getOwnedCardsOnChain().
+ * Avoids hammering RPC for repeated battles from the same wallet.
+ *
+ * TTL: 30 seconds — enough for a typical match (60-180s) but covers
+ * multi-tab/window refresh without re-querying. Also avoids rate-limit
+ * issues with public mainnet.base.org.
+ *
+ * For multi-instance deployments, swap this for Redis. For single
+ * process (current setup), in-memory Map is fine.
+ */
+const ownershipCache = new Map<string, { data: CardOwnership[]; expiresAt: number }>();
+const CACHE_TTL_MS = 30_000;
+
+/** Get cached ownership (for tests / debugging). */
+export function _getOwnershipCacheSize(): number {
+  return ownershipCache.size;
+}
+
+/**
  * Query the ClashCards contract for all cards owned by a wallet.
  *
  * Strategy:
@@ -111,6 +130,14 @@ export async function getOwnedCardsOnChain(
   wallet: Address | string
 ): Promise<CardOwnership[]> {
   const walletAddr = getAddress(wallet);
+
+  // Check cache first (TTL 30s). Avoids RPC hits for repeat battles
+  // and protects against public RPC rate limits.
+  const cached = ownershipCache.get(walletAddr.toLowerCase());
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
   const contracts: Array<{ address: `0x${string}`; abi: typeof CLASH_CARDS_ABI; functionName: "balanceOf"; args: readonly [bigint, `0x${string}`] }> = [];
 
   for (const cardId of Object.keys(CARD_TYPE_IDS)) {
@@ -154,7 +181,7 @@ export async function getOwnedCardsOnChain(
     ownershipMap.set(cardTypeId, { maxLevel, total });
   }
 
-  return Object.keys(CARD_TYPE_IDS).map((cardId) => {
+  const result = Object.keys(CARD_TYPE_IDS).map((cardId) => {
     const cardTypeId = CARD_TYPE_IDS[cardId];
     const { maxLevel, total } = ownershipMap.get(cardTypeId)!;
     return {
@@ -164,6 +191,15 @@ export async function getOwnedCardsOnChain(
       totalBalance: total,
     };
   });
+
+  // Cache result for 30s — avoids RPC hits for repeat battles
+  // and protects against public mainnet.base.org rate limits.
+  ownershipCache.set(walletAddr.toLowerCase(), {
+    data: result,
+    expiresAt: Date.now() + CACHE_TTL_MS,
+  });
+
+  return result;
 }
 
 /**
