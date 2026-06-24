@@ -336,36 +336,49 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // deck load completes (~300-500ms via on-chain multicall) and hit
     // NO_BATTLE_DECK / CARD_NOT_IN_DECK rejection.
     //
+    // Architecture: deck comes from the CLIENT (not DB). The DB has no
+    // selected_battle_deck column anymore. Client sends their 8 selected
+    // cards via auth.deck (set by matchmaking) or options.deck. Server
+    // validates them on-chain via ClashCards.balanceOf.
+    //
     // To avoid blocking matchmaking forever, we race the on-chain query
     // with a 5s timeout. If it fails, the player joins with empty deck
     // (cannot deploy anything) — better than crashing on join.
+    const clientDeck: string[] =
+      Array.isArray(auth?.deck) ? auth.deck :
+      Array.isArray(options?.deck) ? options.deck :
+      [];
     if (wallet && wallet !== "anonymous") {
       try {
-        const deckLoadPromise = (async () => {
-          const { data, error } = await getSupabase()
-            .from('profiles')
-            .select('nickname, selected_battle_deck')
-            .eq('wallet_address', wallet.toLowerCase())
-            .maybeSingle();
-
-          if (!error && data?.nickname) {
-            console.log(`[BattleRoom] SECURE AUTH: Overriding nickname for ${wallet} -> ${data.nickname}`);
-            player.nickname = data.nickname;
+        // Fetch secure nickname from DB (still useful for display)
+        const nicknamePromise = (async () => {
+          try {
+            const { data } = await getSupabase()
+              .from('profiles')
+              .select('nickname')
+              .eq('wallet_address', wallet.toLowerCase())
+              .maybeSingle();
+            if (data?.nickname) {
+              console.log(`[BattleRoom] SECURE AUTH: Overriding nickname for ${wallet} -> ${data.nickname}`);
+              player.nickname = data.nickname;
+            }
+          } catch (e) {
+            // Non-fatal — keep fallback nickname
           }
+        })();
 
-          const savedDeck: string[] = data?.selected_battle_deck || [];
-          if (savedDeck.length === 0) {
-            console.warn(`[BattleRoom] ${wallet} has no Battle Deck saved. They won't be able to deploy anything.`);
+        const deckValidatePromise = (async () => {
+          if (clientDeck.length === 0) {
+            console.warn(`[BattleRoom] ${wallet} sent empty Battle Deck. They won't be able to deploy.`);
             return;
           }
-
           const { getOwnedCardsOnChain } = await import('../services/clashCards.js');
           const owned = await getOwnedCardsOnChain(wallet);
           const ownershipMap = new Map(owned.map((o) => [o.cardId, o]));
 
           const validDeck: string[] = [];
           const validLevels: number[] = [];
-          for (const cardId of savedDeck) {
+          for (const cardId of clientDeck) {
             const ownership = ownershipMap.get(cardId);
             if (ownership && ownership.maxLevel > 0) {
               validDeck.push(cardId);
@@ -376,7 +389,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           }
 
           if (validDeck.length === 0) {
-            console.error(`[BattleRoom] ${wallet} has no valid Battle Deck (none of their 8 cards are owned as NFTs on-chain)`);
+            console.error(`[BattleRoom] ${wallet} proposed deck has 0 owned NFTs. Cannot deploy.`);
           } else {
             validDeck.forEach((c) => player.deck.push(c));
             validLevels.forEach((l) => player.deckLevels.push(l));
@@ -388,9 +401,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           setTimeout(() => reject(new Error('deck load timeout')), 5000)
         );
 
-        await Promise.race([deckLoadPromise, timeoutPromise]);
+        await Promise.race([Promise.all([nicknamePromise, deckValidatePromise]), timeoutPromise]);
       } catch (err) {
-        console.error(`[BattleRoom] Deck load failed for ${wallet}:`, (err as Error).message);
+        console.error(`[BattleRoom] Deck validation failed for ${wallet}:`, (err as Error).message);
         console.warn(`[BattleRoom] ${wallet} will join with empty deck (cannot deploy)`);
       }
     }

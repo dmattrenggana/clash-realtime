@@ -32,7 +32,7 @@ interface InFlightHandoff {
 
 export class BattleQueueRoom extends Room {
   maxClients = 100; // many can wait
-  private pending = new Map<string, { wallet?: string, nickname?: string }>();
+  private pending = new Map<string, { wallet?: string, nickname?: string; deck?: string[] }>();
   // Tracks in-flight handoffs so we can cancel timeouts on matchAccepted / leave / dispose
   private handoffs = new Map<string, InFlightHandoff>();
   // Tracks per-client matchmaking timeouts for AI Bot fallback (20 seconds)
@@ -73,9 +73,12 @@ export class BattleQueueRoom extends Room {
     const data = (options?.wallet && typeof options.wallet === 'object') ? options.wallet : options;
     const wallet = String(data?.wallet || "anonymous");
     const nickname = String(data?.nickname || "Anonymous");
+    // 2026-06-24: client's 8-card Battle Deck (from localStorage).
+    // BattleRoom.onJoin will validate against on-chain NFT ownership.
+    const deck: string[] = Array.isArray(data?.deck) ? data.deck.filter((c: any) => typeof c === 'string') : [];
 
-    console.log(`[BattleQueue] ${client.sessionId} joined (wallet: ${wallet}, nickname: ${nickname})`);
-    this.pending.set(client.sessionId, { wallet, nickname });
+    console.log(`[BattleQueue] ${client.sessionId} joined (wallet: ${wallet}, nickname: ${nickname}, deck: ${deck.length} cards)`);
+    this.pending.set(client.sessionId, { wallet, nickname, deck });
     client.send("queued", { position: this.pending.size });
 
     // Arm a matchmaking timeout for this player to fallback to AI Bot
@@ -159,8 +162,8 @@ export class BattleQueueRoom extends Room {
       console.log(`[BattleQueue] Matched ${idA} vs ${idB} → room ${battleRoom.roomId}`);
 
       // 2. Reserve seats (creates seat reservations; client uses these to join)
-      const resA = await matchMaker.reserveSeatFor(battleRoom, { wallet: a?.wallet, nickname: a?.nickname });
-      const resB = await matchMaker.reserveSeatFor(battleRoom, { wallet: b?.wallet, nickname: b?.nickname });
+      const resA = await matchMaker.reserveSeatFor(battleRoom, { wallet: a?.wallet, nickname: a?.nickname, deck: a?.deck ?? [] });
+      const resB = await matchMaker.reserveSeatFor(battleRoom, { wallet: b?.wallet, nickname: b?.nickname, deck: b?.deck ?? [] });
 
       // 3. Start handoff for each client
       const clientA = this.clients.find((c) => c.sessionId === idA);
@@ -238,6 +241,7 @@ export class BattleQueueRoom extends Room {
       const reservation = await matchMaker.reserveSeatFor(battleRoom, {
         wallet: player.wallet,
         nickname: player.nickname,
+        deck: player.deck ?? [],
       });
 
       // 3. Start handoff
