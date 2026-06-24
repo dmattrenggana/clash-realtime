@@ -161,6 +161,7 @@ export class DeployedUnit extends Schema {
   @type("float32") spawnTime: number = 0;
   @type("uint16") hp: number = 100;
   @type("uint16") maxHp: number = 100;
+  @type("uint8") cardLevel: number = 1; // NFT level of the deployed card (L1..L9). Affects HP/damage scaling.
   
   // Animation and Combat states
   @type("string") action: string = "idle"; // "idle", "walk", "attack"
@@ -199,6 +200,13 @@ export class Player extends Schema {
   // secure_record_match (which would inflate the human's profile).
   @type("boolean") isAgent: boolean = false;
   @type("string") agentId: string = "";
+  // 2026-06-24: Battle Deck (NFT-gated) — 8 selected cardIds.
+  // Server validates this against on-chain NFT ownership in onJoin.
+  // handleDeployCard rejects any cardId not in this list.
+  @type(["string"]) deck = new ArraySchema<string>();
+  // Per-card NFT level (L1..L9). Used for HP/damage scaling in combat.
+  // Stored as parallel arrays: deck[i] → deckLevels[i].
+  @type(["uint8"]) deckLevels = new ArraySchema<number>();
   @type([Tower]) towers = new ArraySchema<Tower>();
   @type({ map: DeployedUnit }) units = new MapSchema<DeployedUnit>();
 }

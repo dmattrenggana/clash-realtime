@@ -1,6 +1,7 @@
 import { DeployedUnit, Player, SPELL_CARDS, SPELL_TRIGGER, SPELL_DETONATE_AFTER_MS, SPELL_TRIGGER_RADIUS, SPELL_SPLASH_RADIUS, SPELL_DAMAGE } from "../rooms/schema/BattleState.js";
 import { CARD_RANGE, CARD_ATTACK_SPEED, CARD_ATTACK_DAMAGE, CARD_ATTACK_SPLASH } from "../rooms/schema/BattleState.js";
 import { getTowerCoords } from "./pathfinding.js";
+import { scaleStatByLevel } from "../services/clashCards.js";
 
 /**
  * Custom AI Behavior for the Healer troop.
@@ -42,7 +43,9 @@ export function processHealerAI(
       const attackSpeed = CARD_ATTACK_SPEED[unit.cardId] || 1.0;
       if (now - unit.lastAttackTime >= attackSpeed) {
         unit.lastAttackTime = now;
-        const healAmount = CARD_ATTACK_DAMAGE[unit.cardId] || 20;
+        // 2026-06-24: Heal amount scales with NFT level (L1..L9).
+        const baseHeal = CARD_ATTACK_DAMAGE[unit.cardId] || 20;
+        const healAmount = scaleStatByLevel(baseHeal, unit.cardLevel || 1);
         const splash = CARD_ATTACK_SPLASH[unit.cardId] || 1.8;
         
         // AoE Heal around target
@@ -123,7 +126,9 @@ export function detonateSpell(
 ): void {
   if (!enemy) return;
   const radius = SPELL_SPLASH_RADIUS[spell.cardId] ?? 3.0;
-  const damage = SPELL_DAMAGE[spell.cardId] ?? 0;
+  // 2026-06-24: Spell damage scales with NFT level.
+  const baseDamage = SPELL_DAMAGE[spell.cardId] ?? 0;
+  const damage = scaleStatByLevel(baseDamage, spell.cardLevel || 1);
   if (damage <= 0) return;
 
   let dealt = 0;

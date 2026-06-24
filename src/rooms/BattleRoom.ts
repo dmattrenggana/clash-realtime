@@ -17,6 +17,7 @@ import {
   INITIAL_TOWER_HP,
   SPELL_CARDS,
 } from "./schema/BattleState.js";
+import { scaleStatByLevel } from "../services/clashCards.js";
 
 const TICK_RATE_MS = 100; // 10 Hz server tick
 const RECONNECTION_GRACE_SEC = 30;
@@ -334,11 +335,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // definitive DB version. (2026-06-16: invite-code gate removed entirely
     // — every authenticated user can play, no invite_codes table required.)
     if (wallet && wallet !== "anonymous") {
+      // Secure nickname fetch + Battle Deck NFT validation (2026-06-24).
+      // The deck is the user's saved selection from profiles.selected_battle_deck,
+      // but level + ownership are verified ON-CHAIN via ClashCards.balanceOf.
       (async () => {
         try {
           const { data, error } = await getSupabase()
             .from('profiles')
-            .select('nickname')
+            .select('nickname, selected_battle_deck')
             .eq('wallet_address', wallet.toLowerCase())
             .maybeSingle();
 
@@ -346,8 +350,45 @@ export class BattleRoom extends Room<{ state: BattleState }> {
             console.log(`[BattleRoom] SECURE AUTH: Overriding nickname for ${wallet} -> ${data.nickname}`);
             player.nickname = data.nickname;
           }
+
+          // Battle Deck validation: query on-chain NFT ownership
+          // (DB card_inventory is a mirror — ClashCards contract is source of truth).
+          const savedDeck: string[] = data?.selected_battle_deck || [];
+          if (savedDeck.length === 0) {
+            console.warn(`[BattleRoom] ${wallet} has no Battle Deck saved. They won't be able to deploy anything.`);
+            return;
+          }
+
+          const { getOwnedCardsOnChain } = await import('../services/clashCards.js');
+          const owned = await getOwnedCardsOnChain(wallet);
+          const ownershipMap = new Map(owned.map((o) => [o.cardId, o]));
+
+          // Filter deck to only cards the wallet actually owns on-chain
+          const validDeck: string[] = [];
+          const validLevels: number[] = [];
+          for (const cardId of savedDeck) {
+            const ownership = ownershipMap.get(cardId);
+            if (ownership && ownership.maxLevel > 0) {
+              validDeck.push(cardId);
+              validLevels.push(ownership.maxLevel);
+            } else {
+              console.warn(`[BattleRoom] ${wallet} deck has ${cardId} but no NFT owned on-chain — skipping`);
+            }
+          }
+
+          if (validDeck.length === 0) {
+            console.error(`[BattleRoom] ${wallet} has no valid Battle Deck (none of their 8 cards are owned as NFTs on-chain)`);
+            // Don't reject — let them in, but they can't deploy anything.
+          } else {
+            // Update Player schema with validated deck + levels
+            player.deck.clear();
+            player.deckLevels.clear();
+            validDeck.forEach((c) => player.deck.push(c));
+            validLevels.forEach((l) => player.deckLevels.push(l));
+            console.log(`[BattleRoom] ${wallet} Battle Deck loaded: ${validDeck.join(',')} (levels: ${validLevels.join(',')})`);
+          }
         } catch (err) {
-          console.error(`[BattleRoom] Failed to fetch secure nickname for ${wallet}`, err);
+          console.error(`[BattleRoom] Failed to validate Battle Deck for ${wallet}:`, (err as Error).message);
         }
       })();
     }
@@ -777,6 +818,28 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       client.send("error", { code: "INVALID_CARD", message: `Unknown card: ${payload.cardId}` });
       return;
     }
+    // 2026-06-24: Battle Deck enforcement — server validates cardId is in the
+    // player's saved 8-card deck (which itself was validated against on-chain
+    // NFT ownership in onJoin). Reject if the player tries to deploy a card
+    // they didn't select (or don't own).
+    if (player.deck.length === 0) {
+      client.send("error", {
+        code: "NO_BATTLE_DECK",
+        message: "No Battle Deck loaded. You must own at least one NFT for each of your 8 selected cards.",
+      });
+      return;
+    }
+    if (!player.deck.includes(payload.cardId)) {
+      client.send("error", {
+        code: "CARD_NOT_IN_DECK",
+        message: `${payload.cardId} is not in your Battle Deck. Add it via the Deck Customization tab before battling.`,
+        details: {
+          cardId: payload.cardId,
+          yourDeck: player.deck.toArray(),
+        },
+      });
+      return;
+    }
     if (player.elixir < cost) {
       client.send("error", { code: "INSUFFICIENT_ELIXIR", message: "Not enough elixir" });
       return;
@@ -830,18 +893,28 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const currentCount = this.cardsDeployed.get(player.walletAddress) || 0;
     this.cardsDeployed.set(player.walletAddress, currentCount + 1);
 
-    for (let i = 0; i < spawnCount; i++) {
+    // 2026-06-24: Apply NFT-level scaling to deployed units.
+// Level comes from player.deckLevels (set during onJoin from on-chain query).
+const cardLevelIdx = player.deck.toArray().indexOf(payload.cardId);
+const cardLevel = cardLevelIdx >= 0 ? player.deckLevels[cardLevelIdx] || 1 : 1;
+
+// Compute level-scaled HP for this unit.
+const baseHp = CARD_HP[payload.cardId] || 100;
+const scaledHp = scaleStatByLevel(baseHp, cardLevel);
+
+for (let i = 0; i < spawnCount; i++) {
       const unit = new DeployedUnit();
       unit.cardId = payload.cardId;
       unit.team = player.team;
-      
+      unit.cardLevel = cardLevel;
+
       // Add slight offset for multi-unit spawns so they don't overlap perfectly
       const offsetX = spawnCount > 1 ? (i - (spawnCount - 1) / 2) * 0.8 : 0;
       unit.x = payload.x + offsetX;
       unit.z = payload.z;
-      
-      unit.hp = CARD_HP[payload.cardId] || 100;
-      unit.maxHp = unit.hp;
+
+      unit.hp = scaledHp;
+      unit.maxHp = scaledHp;
       unit.spawnTime = this.state.elapsedSec;
 
       const unitId = `${client.sessionId}-${this.clock.currentTime}-${i}`;
