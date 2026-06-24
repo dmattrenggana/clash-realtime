@@ -166,7 +166,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         // isAgent and agentId are stashed in auth for BattleRoom.onJoin to read.
         return {
           userId: agent.agent_id,
-          wallet: agent.agent_wallet_address ?? agent.wallet_address,
+          wallet: agent.wallet_address, // agents.wallet_address = agent's own EVM wallet
           isAgent: true,
           agentId: agent.agent_id,
           agentName: agent.agent_name,
@@ -271,7 +271,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     console.log(`[BattleRoom] Empty-room guard armed: ${EMPTY_ROOM_TIMEOUT_MS}ms`);
   }
 
-  onJoin(client: Client, options: any, auth?: any) {
+  async onJoin(client: Client, options: any, auth?: any) {
     // SECURITY: prefer server-verified auth values over client-sent options.
     // For agents: auth.isAgent + auth.agentId are from the verify_api_key RPC.
     // For humans: auth.wallet is from the verified Privy user object.
@@ -331,15 +331,17 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     player.isAgent = agentId.length > 0;
     player.agentId = agentId;
 
-    // Secure Nickname Fetch: Asynchronously override the nickname with the
-    // definitive DB version. (2026-06-16: invite-code gate removed entirely
-    // — every authenticated user can play, no invite_codes table required.)
+    // 2026-06-24: Battle Deck NFT validation BEFORE adding player to state.
+    // If we add the player first, the client can deploy before the async
+    // deck load completes (~300-500ms via on-chain multicall) and hit
+    // NO_BATTLE_DECK / CARD_NOT_IN_DECK rejection.
+    //
+    // To avoid blocking matchmaking forever, we race the on-chain query
+    // with a 5s timeout. If it fails, the player joins with empty deck
+    // (cannot deploy anything) — better than crashing on join.
     if (wallet && wallet !== "anonymous") {
-      // Secure nickname fetch + Battle Deck NFT validation (2026-06-24).
-      // The deck is the user's saved selection from profiles.selected_battle_deck,
-      // but level + ownership are verified ON-CHAIN via ClashCards.balanceOf.
-      (async () => {
-        try {
+      try {
+        const deckLoadPromise = (async () => {
           const { data, error } = await getSupabase()
             .from('profiles')
             .select('nickname, selected_battle_deck')
@@ -351,8 +353,6 @@ export class BattleRoom extends Room<{ state: BattleState }> {
             player.nickname = data.nickname;
           }
 
-          // Battle Deck validation: query on-chain NFT ownership
-          // (DB card_inventory is a mirror — ClashCards contract is source of truth).
           const savedDeck: string[] = data?.selected_battle_deck || [];
           if (savedDeck.length === 0) {
             console.warn(`[BattleRoom] ${wallet} has no Battle Deck saved. They won't be able to deploy anything.`);
@@ -363,7 +363,6 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           const owned = await getOwnedCardsOnChain(wallet);
           const ownershipMap = new Map(owned.map((o) => [o.cardId, o]));
 
-          // Filter deck to only cards the wallet actually owns on-chain
           const validDeck: string[] = [];
           const validLevels: number[] = [];
           for (const cardId of savedDeck) {
@@ -378,19 +377,22 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
           if (validDeck.length === 0) {
             console.error(`[BattleRoom] ${wallet} has no valid Battle Deck (none of their 8 cards are owned as NFTs on-chain)`);
-            // Don't reject — let them in, but they can't deploy anything.
           } else {
-            // Update Player schema with validated deck + levels
-            player.deck.clear();
-            player.deckLevels.clear();
             validDeck.forEach((c) => player.deck.push(c));
             validLevels.forEach((l) => player.deckLevels.push(l));
             console.log(`[BattleRoom] ${wallet} Battle Deck loaded: ${validDeck.join(',')} (levels: ${validLevels.join(',')})`);
           }
-        } catch (err) {
-          console.error(`[BattleRoom] Failed to validate Battle Deck for ${wallet}:`, (err as Error).message);
-        }
-      })();
+        })();
+
+        const timeoutPromise = new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error('deck load timeout')), 5000)
+        );
+
+        await Promise.race([deckLoadPromise, timeoutPromise]);
+      } catch (err) {
+        console.error(`[BattleRoom] Deck load failed for ${wallet}:`, (err as Error).message);
+        console.warn(`[BattleRoom] ${wallet} will join with empty deck (cannot deploy)`);
+      }
     }
 
     const t1 = new Tower();
@@ -417,6 +419,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.refreshRoomMetadata();
     console.log(`[BattleRoom] ${client.sessionId} joined (wallet: ${wallet}, team: ${team}, nickname: ${fallbackNickname})`);
 
+    // Start match if both players are in or bot fallback is queued.
     if (this.triggerBot) {
       this.activateBotFallback();
     } else if (this.state.players.size === 2) {
@@ -582,7 +585,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         const { data: agentRow, error: agentErr } = await getSupabase()
           .from('agents')
           .select('id')
-          .eq('agent_wallet_address', playerWallet.toLowerCase())
+          .eq('wallet_address', playerWallet.toLowerCase())
           .maybeSingle();
         if (!agentErr && agentRow) {
           isAgentForRecord = true;
