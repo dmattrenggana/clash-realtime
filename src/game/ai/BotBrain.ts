@@ -88,9 +88,9 @@ export class BotBrain {
         botPlayer.deck.push(cardId);
         botPlayer.deckLevels.push(1);
       }
-      console.log();
+      console.log(`[BotBrain] Synced bot Battle Deck into Player schema (${botPlayer.deck.length} cards) for ${this.botSessionId}`);
     } else {
-      console.warn();
+      console.warn(`[BotBrain] Could not find bot Player ${this.botSessionId} to sync deck; deploys may be rejected.`);
     }
   }
 
