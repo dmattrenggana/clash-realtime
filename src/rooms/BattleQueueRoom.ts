@@ -30,9 +30,17 @@ interface InFlightHandoff {
   timeout: Delayed;
 }
 
+interface PendingPlayer {
+  wallet?: string;
+  nickname?: string;
+  deck?: string[];
+  isAgent?: boolean;
+  agentId?: string;
+}
+
 export class BattleQueueRoom extends Room {
   maxClients = 100; // many can wait
-  private pending = new Map<string, { wallet?: string, nickname?: string; deck?: string[] }>();
+  private pending = new Map<string, PendingPlayer>();
   // Tracks in-flight handoffs so we can cancel timeouts on matchAccepted / leave / dispose
   private handoffs = new Map<string, InFlightHandoff>();
   // Tracks per-client matchmaking timeouts for AI Bot fallback (20 seconds)
@@ -76,9 +84,15 @@ export class BattleQueueRoom extends Room {
     // 2026-06-24: client's 8-card Battle Deck (from localStorage).
     // BattleRoom.onJoin will validate against on-chain NFT ownership.
     const deck: string[] = Array.isArray(data?.deck) ? data.deck.filter((c: any) => typeof c === 'string') : [];
+    // Agent identity (forwarded from MCP server via ColyseusBridge).
+    // isAgent and agentId are NOT trusted here — BattleRoom.onAuth
+    // re-verifies agent identity via verify_api_key RPC. We only forward
+    // them so BattleRoom.onJoin can use them for logging/routing.
+    const isAgent = Boolean(data?.isAgent);
+    const agentId = String(data?.agentId || "");
 
-    console.log(`[BattleQueue] ${client.sessionId} joined (wallet: ${wallet}, nickname: ${nickname}, deck: ${deck.length} cards)`);
-    this.pending.set(client.sessionId, { wallet, nickname, deck });
+    console.log(`[BattleQueue] ${client.sessionId} joined (wallet: ${wallet}, nickname: ${nickname}, deck: ${deck.length} cards, isAgent: ${isAgent})`);
+    this.pending.set(client.sessionId, { wallet, nickname, deck, isAgent, agentId });
     client.send("queued", { position: this.pending.size });
 
     // Arm a matchmaking timeout for this player to fallback to AI Bot
@@ -126,13 +140,39 @@ export class BattleQueueRoom extends Room {
   }
 
   /**
+   * Validate that a player's deck has exactly 8 cards before reserving a seat.
+   * Returns true if valid, false otherwise. Sends an error to the client
+   * and removes them from the queue if invalid.
+   */
+  private validateDeckBeforeSeat(client: Client | undefined, sessionId: string, player: PendingPlayer): boolean {
+    const deck = player.deck ?? [];
+    if (deck.length !== 8) {
+      console.error(`[BattleQueue] ${sessionId} (wallet: ${player.wallet}) has ${deck.length} cards (expected 8). Rejecting before seat reservation.`);
+      if (client) {
+        client.send("matchmakingFailed", {
+          reason: "INVALID_DECK_SIZE",
+          message: `Battle deck must have exactly 8 cards. You have ${deck.length}.`,
+          deckSize: deck.length,
+        });
+        setTimeout(() => { try { void client.leave(); } catch { /* ignore */ } }, 1000);
+      }
+      this.pending.delete(sessionId);
+      this.matchmakingTimeouts.delete(sessionId);
+      this.botFallbackRetries.delete(sessionId);
+      return false;
+    }
+    return true;
+  }
+
+  /**
    * Pair the first 2 players in the queue:
    *   1. Atomically extract 2 players (avoids double-pairing if matchPlayers
    *      is invoked concurrently — e.g. 3+ clients join in rapid succession)
-   *   2. Create a fresh BattleRoom
-   *   3. Reserve seats for both clients
-   *   4. Send `matchFound` to each client with the reservation
-   *   5. Start a per-client handoff timer; wait for `matchAccepted` or timeout
+   *   2. Validate both decks have 8 cards (early reject before BattleRoom)
+   *   3. Create a fresh BattleRoom
+   *   4. Reserve seats for both clients (forwarding isAgent + agentId)
+   *   5. Send `matchFound` to each client with the seat reservation
+   *   6. Start a per-client handoff timer; wait for `matchAccepted` or timeout
    */
   private async matchPlayers(): Promise<void> {
     // Atomic extract: snapshot + delete in one go
@@ -156,18 +196,39 @@ export class BattleQueueRoom extends Room {
       this.matchmakingTimeouts.delete(idB);
     }
 
+    const clientA = this.clients.find((c) => c.sessionId === idA);
+    const clientB = this.clients.find((c) => c.sessionId === idB);
+
+    // Pre-validate deck sizes before creating BattleRoom — saves resources
+    // and gives the client a clear error before they even connect.
+    if (!this.validateDeckBeforeSeat(clientA, idA, a || {})) return;
+    if (!this.validateDeckBeforeSeat(clientB, idB, b || {})) return;
+
     try {
       // 1. Create the battle room
       const battleRoom = await matchMaker.createRoom("battle", {});
       console.log(`[BattleQueue] Matched ${idA} vs ${idB} → room ${battleRoom.roomId}`);
 
       // 2. Reserve seats (creates seat reservations; client uses these to join)
-      const resA = await matchMaker.reserveSeatFor(battleRoom, { wallet: a?.wallet, nickname: a?.nickname, deck: a?.deck ?? [] });
-      const resB = await matchMaker.reserveSeatFor(battleRoom, { wallet: b?.wallet, nickname: b?.nickname, deck: b?.deck ?? [] });
+      // Forward isAgent + agentId so BattleRoom.onJoin can use them for
+      // agent-specific logging and routing. BattleRoom.onAuth re-verifies
+      // agent identity via verify_api_key RPC — these are NOT trusted blindly.
+      const resA = await matchMaker.reserveSeatFor(battleRoom, {
+        wallet: a?.wallet,
+        nickname: a?.nickname,
+        deck: a?.deck ?? [],
+        isAgent: a?.isAgent ?? false,
+        agentId: a?.agentId ?? "",
+      });
+      const resB = await matchMaker.reserveSeatFor(battleRoom, {
+        wallet: b?.wallet,
+        nickname: b?.nickname,
+        deck: b?.deck ?? [],
+        isAgent: b?.isAgent ?? false,
+        agentId: b?.agentId ?? "",
+      });
 
       // 3. Start handoff for each client
-      const clientA = this.clients.find((c) => c.sessionId === idA);
-      const clientB = this.clients.find((c) => c.sessionId === idB);
       if (clientA) this.startHandoff(clientA, resA, battleRoom.roomId);
       if (clientB) this.startHandoff(clientB, resB, battleRoom.roomId);
     } catch (err) {
@@ -229,6 +290,11 @@ export class BattleQueueRoom extends Room {
 
     console.log(`[BattleQueue] Matchmaking timeout reached for ${sessionId} (20s). Launching BattleRoom with AI Bot...`);
 
+    const client = this.clients.find((c) => c.sessionId === sessionId);
+
+    // Pre-validate deck size before creating BattleRoom
+    if (!this.validateDeckBeforeSeat(client, sessionId, player)) return;
+
     try {
       // 1. Create a BattleRoom with triggerBot: true option
       const battleRoom = await matchMaker.createRoom("battle", { triggerBot: true });
@@ -237,15 +303,16 @@ export class BattleQueueRoom extends Room {
       // Reset retry counter on success (bot fallback worked this time)
       this.botFallbackRetries.delete(sessionId);
 
-      // 2. Reserve a seat for this player
+      // 2. Reserve a seat for this player (forward isAgent + agentId)
       const reservation = await matchMaker.reserveSeatFor(battleRoom, {
         wallet: player.wallet,
         nickname: player.nickname,
         deck: player.deck ?? [],
+        isAgent: player.isAgent ?? false,
+        agentId: player.agentId ?? "",
       });
 
       // 3. Start handoff
-      const client = this.clients.find((c) => c.sessionId === sessionId);
       if (client) {
         this.startHandoff(client, reservation, battleRoom.roomId);
       }
