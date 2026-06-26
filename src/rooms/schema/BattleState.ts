@@ -207,6 +207,17 @@ export class Player extends Schema {
   // Per-card NFT level (L1..L9). Used for HP/damage scaling in combat.
   // Stored as parallel arrays: deck[i] → deckLevels[i].
   @type(["uint8"]) deckLevels = new ArraySchema<number>();
+  // 2026-06-26: Clash-Royale-style 4-card HAND + cycle queue. The 8-card `deck`
+  // above is the full owned set; at any moment only these 4 cards are playable.
+  // handleDeployCard validates against `hand` (NOT `deck`). After a successful
+  // deploy the played card rotates to the tail of `nextQueue` and the head of
+  // `nextQueue` is drawn into `hand`. This makes spamming the same card
+  // impossible: you must cycle the other 3 hand cards before it returns.
+  // hand[i] <-> handLevels[i] and nextQueue[i] <-> queueLevels[i] are parallel.
+  @type(["string"]) hand = new ArraySchema<string>();
+  @type(["uint8"]) handLevels = new ArraySchema<number>();
+  @type(["string"]) nextQueue = new ArraySchema<string>();
+  @type(["uint8"]) queueLevels = new ArraySchema<number>();
   @type([Tower]) towers = new ArraySchema<Tower>();
   @type({ map: DeployedUnit }) units = new MapSchema<DeployedUnit>();
 }
