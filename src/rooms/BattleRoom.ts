@@ -360,12 +360,17 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.refreshRoomMetadata();
     console.log(`[BattleRoom] ${client.sessionId} joined (wallet: ${wallet}, team: ${team}, nickname: ${fallbackNickname})`);
 
-    // 2026-06-24: Battle Deck NFT validation AFTER adding player to state.
-    // (Deck comes from client options, not DB — verified on-chain via ClashCards.balanceOf.)
+    // 2026-06-26: Battle Deck NFT validation AFTER adding player to state.
+    // HARD FAIL: if the deck is invalid (wrong size or no owned NFTs), the
+    // player is REMOVED from state and the join is rejected — the match
+    // does NOT start for an invalid player. Previously this was a soft fail
+    // (player joined with empty deck, could not deploy).
     //
-    // If the on-chain query is slow, the player can already see the arena
-    // but can't deploy until the deck loads. handleDeployCard rejects
-    // with NO_BATTLE_DECK if player.deck is empty, so this is safe.
+    // This validation applies to BOTH agents and humans — both are validated
+    // on-chain via ClashCards.balanceOf. The agent flow (clash-mcp-server)
+    // pre-validates the deck before joining, so a valid agent should always
+    // pass. The human flow (web UI) sends the client-selected 8-card deck,
+    // which is validated here against on-chain ownership.
     const clientDeck: string[] =
       Array.isArray(auth?.deck) ? auth.deck :
       Array.isArray(options?.deck) ? options.deck :
@@ -390,9 +395,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         })();
 
         const deckValidatePromise = (async () => {
-          if (clientDeck.length === 0) {
-            console.warn(`[BattleRoom] ${wallet} sent empty Battle Deck. They won't be able to deploy.`);
-            return;
+          // 2026-06-26: HARD FAIL deck validation — enforce 8-card deck
+          // with on-chain NFT ownership. Applies to BOTH agents and humans
+          // (both validated on-chain via ClashCards.balanceOf).
+          const playerType = isAgentFromAuth ? "AGENT" : "HUMAN";
+          if (clientDeck.length !== 8) {
+            console.error(`[BattleRoom] ${playerType} ${wallet} sent ${clientDeck.length} cards (need 8). Rejecting join.`);
+            client.leave(4002, "INVALID_DECK_SIZE");
+            throw new Error(`INVALID_DECK_SIZE: Need 8 cards, got ${clientDeck.length}`);
           }
           const { getOwnedCardsOnChain } = await import('../services/clashCards.js');
           const owned = await getOwnedCardsOnChain(wallet);
@@ -406,17 +416,23 @@ export class BattleRoom extends Room<{ state: BattleState }> {
               validDeck.push(cardId);
               validLevels.push(ownership.maxLevel);
             } else {
-              console.warn(`[BattleRoom] ${wallet} deck has ${cardId} but no NFT owned on-chain — skipping`);
+              console.warn(`[BattleRoom] ${playerType} ${wallet} deck has ${cardId} but no NFT owned on-chain — skipping`);
             }
           }
 
           if (validDeck.length === 0) {
-            console.error(`[BattleRoom] ${wallet} proposed deck has 0 owned NFTs. Cannot deploy.`);
-          } else {
-            validDeck.forEach((c) => player.deck.push(c));
-            validLevels.forEach((l) => player.deckLevels.push(l));
-            console.log(`[BattleRoom] ${wallet} Battle Deck loaded: ${validDeck.join(',')} (levels: ${validLevels.join(',')})`);
+            console.error(`[BattleRoom] ${playerType} ${wallet} proposed deck has 0 owned NFTs. Rejecting join.`);
+            client.leave(4001, "DECK_VALIDATION_FAILED");
+            throw new Error("DECK_VALIDATION_FAILED: No owned NFTs in deck");
           }
+          if (validDeck.length !== 8) {
+            console.error(`[BattleRoom] ${playerType} ${wallet} deck has only ${validDeck.length} owned NFTs (need 8). Rejecting join.`);
+            client.leave(4002, "INVALID_DECK_SIZE");
+            throw new Error(`INVALID_DECK_SIZE: Need 8 owned cards, got ${validDeck.length}`);
+          }
+          validDeck.forEach((c) => player.deck.push(c));
+          validLevels.forEach((l) => player.deckLevels.push(l));
+          console.log(`[BattleRoom] ${playerType} ${wallet} Battle Deck loaded: ${validDeck.join(',')} (levels: ${validLevels.join(',')})`);
         })();
 
         const timeoutPromise = new Promise<void>((_, reject) =>
@@ -431,7 +447,15 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           console.error(`[BattleRoom] ⚠️  Public RPC (mainnet.base.org) is rate-limited. ` +
             `Set BASE_RPC_URL env var to a private RPC (Alchemy/Infura/QuickNode) to fix.`);
         }
-        console.warn(`[BattleRoom] ${wallet} will join with empty deck (cannot deploy)`);
+        // 2026-06-26: HARD FAIL — remove player from state and re-throw
+        // so the match does NOT start for an invalid player. Previously
+        // this was a soft fail (player joined with empty deck, could not deploy).
+        if (msg.includes('timeout')) {
+          client.leave(4003, "DECK_VALIDATION_TIMEOUT");
+        }
+        this.state.players.delete(client.sessionId);
+        this.refreshRoomMetadata();
+        throw err;
       }
     }
 
@@ -533,7 +557,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    * successfully joined the BattleRoom after consuming the seat reservation).
    */
   private checkEmptyTimeout() {
-    // Game already started (e.g. the timeout raced with the 2nd-player join).
+    // Game already started (e.g., the timeout raced with the 2nd-player join).
     if (this.state.status === "playing") return;
     // Both players actually present (defensive — should have been caught above).
     if (this.clients.length >= 2) return;
@@ -672,7 +696,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         console.error(`[BattleRoom] Match recording failed for ${playerWallet} [Status ${response.status}]:`, errMsg);
       }
     } catch (err) {
-      console.error(`[BattleRoom] Match recording exception for ${playerWallet}:`, (err as Error).message);
+      console.error(`[BattleRoom] Match recording exception for ${playerWallet}: ${(err as Error).message}`);
     }
   }
 
