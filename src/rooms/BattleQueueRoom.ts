@@ -82,7 +82,30 @@ export class BattleQueueRoom extends Room {
     });
   }
 
-  onJoin(client: Client, options: any, auth?: any) {
+  /**
+   * Pre-validate deck size before allowing a player into the queue.
+   * Rejects early if deck is not exactly 8 cards, saving BattleRoom
+   * seat reservation resources.
+   */
+  private validateDeckBeforeSeat(client: Client, deck: string[]): boolean {
+    if (!Array.isArray(deck) || deck.length !== REQUIRED_DECK_SIZE) {
+      console.warn(
+        `[BattleQueue] ${client.sessionId} rejected: deck size ${deck?.length ?? 0} (required ${REQUIRED_DECK_SIZE})`,
+      );
+      client.send("matchmakingFailed", {
+        reason: "invalid_deck_size",
+        message: `Deck must be exactly ${REQUIRED_DECK_SIZE} cards. Got ${deck?.length ?? 0}.`,
+        requiredSize: REQUIRED_DECK_SIZE,
+        actualSize: deck?.length ?? 0,
+      });
+      // Give client a moment to receive the message, then disconnect
+      setTimeout(() => { try { void client.leave(4002, "INVALID_DECK_SIZE"); } catch { /* ignore */ } }, 500);
+      return false;
+    }
+    return true;
+  }
+
+  onJoin(client: Client, options: any) {
     // Pastikan kita mengambil data dari root options atau nested wallet object
     const data = (options?.wallet && typeof options.wallet === 'object') ? options.wallet : options;
     const wallet = String(data?.wallet || "anonymous");
@@ -90,38 +113,16 @@ export class BattleQueueRoom extends Room {
     // 2026-06-24: client's 8-card Battle Deck (from localStorage).
     // BattleRoom.onJoin will validate against on-chain NFT ownership.
     const deck: string[] = Array.isArray(data?.deck) ? data.deck.filter((c: any) => typeof c === 'string') : [];
+    // 2026-06-26: Agent identity forwarded from auth (clash_ prefix → verify_api_key RPC)
+    const isAgent = Boolean(data?.isAgent);
+    const agentId = data?.agentId ? String(data.agentId) : undefined;
 
-    // 2026-06-26: Pre-validate deck size BEFORE adding to queue.
-    // Reject early with a clear error so we don't waste a BattleRoom seat
-    // reservation on a client that will fail BattleRoom.onJoin validation.
-    // Applies to BOTH agents and humans — both must send exactly 8 cards.
-    if (deck.length !== REQUIRED_DECK_SIZE) {
-      const playerType = auth?.isAgent === true ? "AGENT" : "HUMAN";
-      console.error(
-        `[BattleQueue] ${playerType} ${wallet} sent ${deck.length} cards (need ${REQUIRED_DECK_SIZE}). Rejecting from queue.`,
-      );
-      client.send("error", {
-        code: "INVALID_DECK_SIZE",
-        message: `Battle Deck must be exactly ${REQUIRED_DECK_SIZE} cards. You sent ${deck.length}.`,
-        details: { sent: deck.length, required: REQUIRED_DECK_SIZE },
-      });
-      // Force-leave so the client gets a clean disconnect + the error message
-      setTimeout(() => { try { void client.leave(); } catch { /* ignore */ } }, 100);
-      return;
+    // Pre-validate deck size BEFORE adding to queue — reject early
+    if (!this.validateDeckBeforeSeat(client, deck)) {
+      return; // Client already notified + scheduled for leave
     }
 
-    // 2026-06-26: Capture agent identity from server-verified auth.
-    // For agents (clash_ API key), auth.isAgent + auth.agentId come from
-    // the verify_api_key RPC. For humans (Privy JWT), these are absent.
-    // Forward both to BattleRoom via reserveSeatFor so BattleRoom.onJoin
-    // can log player type and route validation accordingly.
-    const isAgent = auth?.isAgent === true;
-    const agentId = isAgent ? String(auth?.agentId || "") : "";
-
-    console.log(
-      `[BattleQueue] ${client.sessionId} joined (wallet: ${wallet}, nickname: ${nickname}, ` +
-      `deck: ${deck.length} cards, type: ${isAgent ? "AGENT" : "HUMAN"}${agentId ? ` (${agentId})` : ""})`,
-    );
+    console.log(`[BattleQueue] ${client.sessionId} joined (wallet: ${wallet}, nickname: ${nickname}, deck: ${deck.length} cards, agent: ${isAgent})`);
     this.pending.set(client.sessionId, { wallet, nickname, deck, isAgent, agentId });
     client.send("queued", { position: this.pending.size });
 
@@ -174,7 +175,7 @@ export class BattleQueueRoom extends Room {
    *   1. Atomically extract 2 players (avoids double-pairing if matchPlayers
    *      is invoked concurrently — e.g. 3+ clients join in rapid succession)
    *   2. Create a fresh BattleRoom
-   *   3. Reserve seats for both clients (forwarding isAgent + agentId)
+   *   3. Reserve seats for both clients
    *   4. Send `matchFound` to each client with the reservation
    *   5. Start a per-client handoff timer; wait for `matchAccepted` or timeout
    */
@@ -206,20 +207,20 @@ export class BattleQueueRoom extends Room {
       console.log(`[BattleQueue] Matched ${idA} vs ${idB} → room ${battleRoom.roomId}`);
 
       // 2. Reserve seats (creates seat reservations; client uses these to join)
-      // 2026-06-26: forward isAgent + agentId so BattleRoom.onJoin can use them.
+      // Forward isAgent + agentId so BattleRoom can apply agent-specific validation
       const resA = await matchMaker.reserveSeatFor(battleRoom, {
         wallet: a?.wallet,
         nickname: a?.nickname,
         deck: a?.deck ?? [],
-        isAgent: a?.isAgent === true,
-        agentId: a?.agentId || "",
+        isAgent: a?.isAgent ?? false,
+        agentId: a?.agentId,
       });
       const resB = await matchMaker.reserveSeatFor(battleRoom, {
         wallet: b?.wallet,
         nickname: b?.nickname,
         deck: b?.deck ?? [],
-        isAgent: b?.isAgent === true,
-        agentId: b?.agentId || "",
+        isAgent: b?.isAgent ?? false,
+        agentId: b?.agentId,
       });
 
       // 3. Start handoff for each client
@@ -295,13 +296,13 @@ export class BattleQueueRoom extends Room {
       this.botFallbackRetries.delete(sessionId);
 
       // 2. Reserve a seat for this player
-      // 2026-06-26: forward isAgent + agentId so BattleRoom.onJoin can use them.
+      // Forward isAgent + agentId so BattleRoom can apply agent-specific validation
       const reservation = await matchMaker.reserveSeatFor(battleRoom, {
         wallet: player.wallet,
         nickname: player.nickname,
         deck: player.deck ?? [],
-        isAgent: player.isAgent === true,
-        agentId: player.agentId || "",
+        isAgent: player.isAgent ?? false,
+        agentId: player.agentId,
       });
 
       // 3. Start handoff
