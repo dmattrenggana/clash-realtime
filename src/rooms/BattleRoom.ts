@@ -432,6 +432,23 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           }
           validDeck.forEach((c) => player.deck.push(c));
           validLevels.forEach((l) => player.deckLevels.push(l));
+          // 2026-06-26: Build the 4-card HAND + 4-card cycle queue from the
+          // validated 8-card deck. Deterministic per-match shuffle keyed on the
+          // room seed (+wallet) so both players + replays agree on draw order.
+          {
+            const order = Array.from({ length: validDeck.length }, (_, i) => i);
+            let hseed = 0;
+            const seedStr = String(this.state.seed) + ":" + wallet;
+            for (let i = 0; i < seedStr.length; i++) { hseed = (Math.imul(31, hseed) + seedStr.charCodeAt(i)) | 0; }
+            let a = hseed >>> 0;
+            const rng = () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+            for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); const tmp = order[i]; order[i] = order[j]; order[j] = tmp; }
+            order.forEach((idx, pos) => {
+              if (pos < 4) { player.hand.push(validDeck[idx]); player.handLevels.push(validLevels[idx]); }
+              else { player.nextQueue.push(validDeck[idx]); player.queueLevels.push(validLevels[idx]); }
+            });
+            console.log("[BattleRoom] " + playerType + " " + wallet + " opening hand: " + player.hand.toArray().join(",") + " | queue: " + player.nextQueue.toArray().join(","));
+          }
           console.log(`[BattleRoom] ${playerType} ${wallet} Battle Deck loaded: ${validDeck.join(',')} (levels: ${validLevels.join(',')})`);
         })();
 
@@ -872,14 +889,24 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       });
       return;
     }
-    if (!player.deck.includes(payload.cardId)) {
+    // 2026-06-26: HAND enforcement (anti-spam). Only the 4 cards currently in
+    // `player.hand` are playable. The 8-card `deck` was validated against
+    // on-chain NFT ownership in onJoin; `hand` is a rotating 4-card subset.
+    // Deploying a card not in hand (e.g. spamming one troop) is rejected — you
+    // must cycle the other 3 cards before it returns to hand.
+    if (player.deck.length > 0 && !player.deck.includes(payload.cardId)) {
       client.send("error", {
         code: "CARD_NOT_IN_DECK",
         message: `${payload.cardId} is not in your Battle Deck. Add it via the Deck Customization tab before battling.`,
-        details: {
-          cardId: payload.cardId,
-          yourDeck: player.deck.toArray(),
-        },
+        details: { cardId: payload.cardId, yourDeck: player.deck.toArray() },
+      });
+      return;
+    }
+    if (player.hand.length > 0 && !player.hand.includes(payload.cardId)) {
+      client.send("error", {
+        code: "CARD_NOT_IN_HAND",
+        message: `${payload.cardId} is not in your current hand. You can only deploy one of your 4 hand cards; cycle the others first.`,
+        details: { cardId: payload.cardId, yourHand: player.hand.toArray(), nextCard: player.nextQueue.length > 0 ? player.nextQueue[0] : null },
       });
       return;
     }
@@ -938,8 +965,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
     // 2026-06-24: Apply NFT-level scaling to deployed units.
 // Level comes from player.deckLevels (set during onJoin from on-chain query).
-const cardLevelIdx = player.deck.toArray().indexOf(payload.cardId);
-const cardLevel = cardLevelIdx >= 0 ? player.deckLevels[cardLevelIdx] || 1 : 1;
+// 2026-06-26: level comes from the HAND slot being played (handLevels parallel
+// to hand), falling back to the deck index for safety.
+const handIdx = player.hand.toArray().indexOf(payload.cardId);
+const deckIdx = player.deck.toArray().indexOf(payload.cardId);
+const cardLevel = handIdx >= 0 ? (player.handLevels[handIdx] || 1) : (deckIdx >= 0 ? (player.deckLevels[deckIdx] || 1) : 1);
 
 // Compute level-scaled HP for this unit.
 const baseHp = CARD_HP[payload.cardId] || 100;
@@ -962,6 +992,22 @@ for (let i = 0; i < spawnCount; i++) {
 
       const unitId = `${client.sessionId}-${this.clock.currentTime}-${i}`;
       player.units.set(unitId, unit);
+    }
+
+    // 2026-06-26: CYCLE the hand. Remove the played card from `hand` and push it
+    // to the tail of `nextQueue`; draw the head of `nextQueue` into `hand`. This
+    // is the Clash-Royale cycle that prevents replaying the same card until the
+    // other 3 hand cards have been played. Levels travel with their card.
+    if (handIdx >= 0 && player.nextQueue.length > 0) {
+      const playedCard = player.hand[handIdx];
+      const playedLevel = player.handLevels[handIdx] || 1;
+      player.hand.splice(handIdx, 1);
+      player.handLevels.splice(handIdx, 1);
+      player.nextQueue.push(playedCard);
+      player.queueLevels.push(playedLevel);
+      const drawnCard = player.nextQueue.shift();
+      const drawnLevel = player.queueLevels.shift();
+      if (drawnCard !== undefined) { player.hand.push(drawnCard); player.handLevels.push(drawnLevel || 1); }
     }
 
     console.log(`[BattleRoom] Team ${player.team} successfully pushed ${spawnCount} units to state for ${payload.cardId}`);
