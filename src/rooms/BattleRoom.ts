@@ -22,7 +22,7 @@ import { scaleStatByLevel } from "../services/clashCards.js";
 const TICK_RATE_MS = 100; // 10 Hz server tick
 const RECONNECTION_GRACE_SEC = 30;
 const FIELD_BOUND = 100; // |x|, |z| <= 100
-// If a BattleRoom is created (via matchMaker) but the second player never
+// If a BattleRoom is created (via matchMaker), but the second player never
 // joins within this window, dispose the room to prevent resource leaks.
 // Covers the case where one client consumed the seat reservation but the
 // other didn't (e.g. timed out or crashed mid-handoff).
@@ -360,19 +360,24 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.refreshRoomMetadata();
     console.log(`[BattleRoom] ${client.sessionId} joined (wallet: ${wallet}, team: ${team}, nickname: ${fallbackNickname})`);
 
-    // 2026-06-24: Battle Deck NFT validation AFTER adding player to state.
-    // (Deck comes from client options, not DB — verified on-chain via ClashCards.balanceOf.)
+    // ═══════════════════════════════════════════════════════════════
+    // BATTLE DECK VALIDATION (on-chain NFT ownership)
+    // ═══════════════════════════════════════════════════════════════
+    // Both agents and humans must pass on-chain deck validation.
+    // HARD FAIL: invalid deck → client kicked, match cancelled.
+    // No soft fail, no empty deck fallback.
     //
-    // If the on-chain query is slow, the player can already see the arena
-    // but can't deploy until the deck loads. handleDeployCard rejects
-    // with NO_BATTLE_DECK if player.deck is empty, so this is safe.
+    // Rules (same for agents and humans, separate logging for clarity):
+    //   1. Client must send exactly 8 card IDs
+    //   2. All 8 cards must be owned on-chain (ClashCards ERC-1155)
+    //   3. Timeout (10s) → kick (RPC issue, not player's fault but can't play)
     const clientDeck: string[] =
       Array.isArray(auth?.deck) ? auth.deck :
       Array.isArray(options?.deck) ? options.deck :
       [];
     if (wallet && wallet !== "anonymous") {
       try {
-        // Fetch secure nickname from DB (still useful for display)
+        // Fetch secure nickname from DB (display only, non-blocking)
         const nicknamePromise = (async () => {
           try {
             const { data } = await getSupabase()
@@ -389,11 +394,18 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           }
         })();
 
+        const playerType = isAgentFromAuth ? "AGENT" : "HUMAN";
+
         const deckValidatePromise = (async () => {
-          if (clientDeck.length === 0) {
-            console.warn(`[BattleRoom] ${wallet} sent empty Battle Deck. They won't be able to deploy.`);
-            return;
+          // Step 1: Client must send exactly 8 cards
+          if (clientDeck.length !== 8) {
+            console.error(`[BattleRoom] ${playerType} ${wallet} sent ${clientDeck.length} cards (expected 8). Rejecting.`);
+            this.state.players.delete(client.sessionId);
+            client.leave(4002, "INVALID_DECK_SIZE");
+            throw new Error(`Deck must have exactly 8 cards, got ${clientDeck.length}`);
           }
+
+          // Step 2: On-chain ownership validation via ClashCards ERC-1155 multicall
           const { getOwnedCardsOnChain } = await import('../services/clashCards.js');
           const owned = await getOwnedCardsOnChain(wallet);
           const ownershipMap = new Map(owned.map((o) => [o.cardId, o]));
@@ -406,17 +418,28 @@ export class BattleRoom extends Room<{ state: BattleState }> {
               validDeck.push(cardId);
               validLevels.push(ownership.maxLevel);
             } else {
-              console.warn(`[BattleRoom] ${wallet} deck has ${cardId} but no NFT owned on-chain — skipping`);
+              console.warn(`[BattleRoom] ${playerType} ${wallet} deck has ${cardId} but no NFT owned on-chain — skipping`);
             }
           }
 
-          if (validDeck.length === 0) {
-            console.error(`[BattleRoom] ${wallet} proposed deck has 0 owned NFTs. Cannot deploy.`);
-          } else {
-            validDeck.forEach((c) => player.deck.push(c));
-            validLevels.forEach((l) => player.deckLevels.push(l));
-            console.log(`[BattleRoom] ${wallet} Battle Deck loaded: ${validDeck.join(',')} (levels: ${validLevels.join(',')})`);
+          // Hard fail: not all 8 cards owned on-chain
+          if (validDeck.length !== 8) {
+            console.error(`[BattleRoom] ${playerType} ${wallet} deck validation failed: only ${validDeck.length}/8 cards owned on-chain. Rejecting.`);
+            this.state.players.delete(client.sessionId);
+            client.leave(4001, "DECK_VALIDATION_FAILED");
+            throw new Error(`Deck validation failed: only ${validDeck.length}/8 cards owned on-chain`);
           }
+
+          // Guard: player might have been removed by timeout handler
+          if (!this.state.players.has(client.sessionId)) {
+            console.warn(`[BattleRoom] ${playerType} ${wallet} removed during deck validation (timeout?). Aborting deck load.`);
+            return;
+          }
+
+          // All 8 cards validated — load deck + levels
+          validDeck.forEach((c) => player.deck.push(c));
+          validLevels.forEach((l) => player.deckLevels.push(l));
+          console.log(`[BattleRoom] ${playerType} ${wallet} Battle Deck loaded: ${validDeck.join(',')} (levels: ${validLevels.join(',')})`);
         })();
 
         const timeoutPromise = new Promise<void>((_, reject) =>
@@ -431,7 +454,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           console.error(`[BattleRoom] ⚠️  Public RPC (mainnet.base.org) is rate-limited. ` +
             `Set BASE_RPC_URL env var to a private RPC (Alchemy/Infura/QuickNode) to fix.`);
         }
-        console.warn(`[BattleRoom] ${wallet} will join with empty deck (cannot deploy)`);
+        // If player still in state (e.g. timeout, not kicked by deckValidatePromise), kick now
+        if (this.state.players.has(client.sessionId)) {
+          this.state.players.delete(client.sessionId);
+          client.leave(4003, "DECK_VALIDATION_TIMEOUT");
+        }
+        // Re-throw to abort onJoin — match will NOT start for this player
+        throw new Error(`Deck validation failed: ${msg}`);
       }
     }
 
