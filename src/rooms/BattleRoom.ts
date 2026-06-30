@@ -28,6 +28,16 @@ const FIELD_BOUND = 100; // |x|, |z| <= 100
 // other didn't (e.g. timed out or crashed mid-handoff).
 const EMPTY_ROOM_TIMEOUT_MS = 30_000;
 
+// SECURITY (audit 2026-06-30 R-CRIT-01): Strict boolean parser for env flags.
+// Previous code used raw string comparison (`=== "true"`), which silently
+// treated typos like `"True"`, `"TRUE"`, `"1"`, `"yes"` as false, masking
+// operator misconfigurations. We now require an exact match against a
+// whitelist of truthy values; anything else is false.
+function parseEnvBool(v: string | undefined): boolean {
+  if (!v) return false;
+  return ["true", "1"].includes(v.trim().toLowerCase());
+}
+
 // NOTE: We CANNOT read process.env here at module load time — @colyseus/tools
 // loads .env.production via dotenv AFTER our module is imported. Reading here
 // would always see empty env. Instead, read env lazily in onAuth() / onCreate().
@@ -131,7 +141,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   static async onAuth(token: string, options: any, context: any) {
     // Read env here (not at module load) — dotenv loads .env.production
     // AFTER this module is imported, so module-level reads would be empty.
-    const allowAnon = process.env.ALLOW_ANON_USERS === "true";
+    // SECURITY (audit 2026-06-30 R-CRIT-01): use parseEnvBool for strict
+    // boolean parsing. Typo like "True" or "1" no longer accidentally
+    // enables the bypass.
+    const allowAnon = parseEnvBool(process.env.ALLOW_ANON_USERS);
 
     // Production: require non-empty token
     if (!token) {
@@ -193,15 +206,36 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         ? options.wallet.wallet
         : (options.wallet || null);
 
-      let authoritativeWallet: string | null = null;
-      try {
-        const user = await getPrivy().getUser(claims.userId);
-        authoritativeWallet = user.wallet?.address?.toLowerCase() ?? null;
-      } catch (err) {
-        console.warn(`[BattleRoom] Could not fetch Privy user for ${claims.userId}:`, (err as Error).message);
+      // SECURITY (audit 2026-06-30 R-CRIT-02): getUser() failure used to be
+      // swallowed (console.warn + null wallet). That let attackers spoof
+      // wallets by inducing transient Privy 5xx — the wallet cross-check
+      // would short-circuit on null and accept whatever the client claimed.
+      // Now: a Privy getUser() failure is a HARD error. We refuse to auth
+      // the client. No spoof possible.
+      const user = await getPrivy().getUser(claims.userId).catch((err) => {
+        console.error(
+          `[BattleRoom] Hard fail: could not fetch Privy user for ${claims.userId}:`,
+          (err as Error).message
+        );
+        throw new Error(
+          `Auth verification failed (Privy user lookup error: ${(err as Error).message}). ` +
+          `Refusing to authenticate without authoritative wallet.`
+        );
+      });
+      const authoritativeWallet = user.wallet?.address?.toLowerCase() ?? null;
+
+      // SECURITY: A user authenticated via Privy MUST have at least one
+      // linked EVM wallet. If Privy says the user has no wallet, we
+      // cannot establish the canonical identity required for the game.
+      // Email-only or social-only Privy sign-ins are no longer accepted.
+      if (!authoritativeWallet) {
+        throw new Error(
+          "Privy user has no linked EVM wallet. Link a wallet in your " +
+          "Privy account before joining a battle."
+        );
       }
 
-      if (clientClaimedWallet && authoritativeWallet &&
+      if (clientClaimedWallet &&
           clientClaimedWallet.toLowerCase() !== authoritativeWallet) {
         console.warn(
           `[BattleRoom] Wallet mismatch: client sent ${clientClaimedWallet} but ` +
@@ -210,10 +244,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         throw new Error("Wallet does not match authenticated identity");
       }
 
-      // Use the authoritative Privy-linked wallet; fall back to userId (Privy
-      // DID) if no wallet is linked (e.g. user only has email login).
-      const finalWallet = authoritativeWallet ?? claims.userId;
-      return { userId: claims.userId, wallet: finalWallet };
+      // Authoritative Privy-linked wallet is now MANDATORY (see throw above).
+      return { userId: claims.userId, wallet: authoritativeWallet };
     } catch (err) {
       // Privy verification failed. If ALLOW_ANON_USERS=true, fall
       // through to anon mode (last-resort dev escape hatch).
@@ -229,13 +261,15 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // Only reached if: (a) token was NOT an agent API key, AND
     // (b) Privy verification failed (or no Privy), AND
     // (c) ALLOW_ANON_USERS=true.
-    // SECURITY: this mode is for local development only. It must NEVER be
-    // enabled in production — anyone can join as any wallet.
+    // SECURITY (audit 2026-06-30 R-CRIT-01): Previous code let the client
+    // pass ANY wallet via options.wallet and we trusted it. An attacker
+    // could join as any wallet and play matches under that identity. Now
+    // we FORCE the anon identity to the literal string "anonymous" — the
+    // client has zero control over what wallet they appear as. Profiles
+    // and match records for "anonymous" are useless for farming.
     if (allowAnon) {
-      const wallet = (typeof options.wallet === "object" && options.wallet !== null)
-        ? options.wallet.wallet
-        : (options.wallet || "anonymous");
-      return { userId: wallet, wallet };
+      const ANON_IDENTITY = "anonymous";
+      return { userId: ANON_IDENTITY, wallet: ANON_IDENTITY };
     }
     throw new Error("Invalid auth token");
   }
@@ -243,12 +277,24 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   onCreate(options: any) {
     // Validate env NOW (after dotenv has loaded .env.production)
     const isProd = process.env.NODE_ENV === "production";
-    const allowAnon = process.env.ALLOW_ANON_USERS === "true";
-    if (isProd && !allowAnon && !process.env.PRIVY_APP_ID) {
-      throw new Error("FATAL: PRIVY_APP_ID missing in production (set ALLOW_ANON_USERS=true to bypass)");
+    const allowAnon = parseEnvBool(process.env.ALLOW_ANON_USERS);
+    // SECURITY (audit 2026-06-30 R-CRIT-01): In production, NEVER allow
+    // ALLOW_ANON_USERS=true — refuse to start. Previous code's startup
+    // log made it look like a safe dev toggle, but if the env was set in
+    // prod by mistake, the server happily booted with anonymous bypass
+    // open. Now: production + anon = process abort at onCreate time.
+    if (isProd && allowAnon) {
+      throw new Error(
+        "FATAL: ALLOW_ANON_USERS=true is set in production. " +
+        "Refusing to start — anon auth bypass would allow any client to " +
+        "claim any wallet. Unset the env var and restart."
+      );
     }
-    if (isProd && !allowAnon && !process.env.PRIVY_APP_SECRET) {
-      throw new Error("FATAL: PRIVY_APP_SECRET missing in production (set ALLOW_ANON_USERS=true to bypass)");
+    if (isProd && !process.env.PRIVY_APP_ID) {
+      throw new Error("FATAL: PRIVY_APP_ID missing in production");
+    }
+    if (isProd && !process.env.PRIVY_APP_SECRET) {
+      throw new Error("FATAL: PRIVY_APP_SECRET missing in production");
     }
     console.log(`[BattleRoom] Auth mode: ${allowAnon ? "ANON (no Privy verify)" : "PRIVY (JWT verify)"}`);
 

@@ -20,6 +20,7 @@ import { BattleQueueRoom } from "./rooms/BattleQueueRoom.js";
 // .env (local dev). No dotenv import = no env loaded; BattleRoom would
 // log "Supabase integration skipped" on every match.
 import dotenv from "dotenv";
+import { timingSafeEqual } from "node:crypto";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -81,10 +82,41 @@ const server = defineServer({
         });
 
         /**
-         * Use @colyseus/monitor
-         * It is recommended to protect this route with a password
-         * Read more: https://docs.colyseus.io/tools/monitoring/#restrict-access-to-the-panel-using-a-password
+         * Inline Basic-Auth middleware for /monitor.
+         * SECURITY (audit 2026-06-30): previously /monitor was wide-open
+         * in production — anyone who knew the URL could see all live rooms,
+         * player nicknames, wallet addresses, and kick/announce actions.
+         *
+         * Note: @colyseus/monitor v0.17's MonitorOptions type doesn't accept
+         * a `password` field (the docs reference a newer version that does).
+         * So we wrap the monitor with our own Basic-Auth gate. Using Node's
+         * built-in `crypto.timingSafeEqual` to avoid timing attacks on the
+         * password comparison.
+         *
+         * Env: MONITOR_PASSWORD must be set in production. In dev, defaults
+         * to "dev" so local testing still works.
          */
+        const monitorPassword = process.env.MONITOR_PASSWORD ?? (process.env.NODE_ENV !== "production" ? "dev" : "");
+        if (process.env.NODE_ENV === "production" && !monitorPassword) {
+            throw new Error("FATAL: MONITOR_PASSWORD must be set in production to protect /monitor");
+        }
+        // Pre-compute the expected Basic-Auth header value (constant-time-safe).
+        const expectedAuth = "Basic " + Buffer.from(`admin:${monitorPassword}`).toString("base64");
+        app.use("/monitor", (req: any, res: any, next: any) => {
+            const got = req.headers.authorization || "";
+            // timingSafeEqual requires equal-length buffers; pad/truncate.
+            const a = Buffer.from(got);
+            const b = Buffer.from(expectedAuth);
+            const len = Math.max(a.length, b.length, 1);
+            const ap = Buffer.alloc(len);
+            const bp = Buffer.alloc(len);
+            a.copy(ap);
+            b.copy(bp);
+            const ok = a.length === b.length && timingSafeEqual(ap, bp);
+            if (ok) return next();
+            res.setHeader("WWW-Authenticate", 'Basic realm="colyseus-monitor"');
+            res.status(401).send("Authentication required");
+        });
         app.use("/monitor", monitor());
 
         // ─── PUBLIC ROOM LIST (for spectate) ───────────────────
