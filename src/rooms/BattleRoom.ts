@@ -723,6 +723,16 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
     console.log(`[BattleRoom] Attempting to record match server-side for wallet: ${playerWallet} (isWinner: ${isWinner}, isAgent: ${isAgentForRecord})...`);
 
+    // DEBUG: emit the king/tower state we are about to send so we can verify
+    // the next match on the live server. Removed once the
+    // "1-crown king-kill recorded as defeat" regression is confirmed gone.
+    console.log(
+      `[BattleRoom][debug-proof] wallet=${playerWallet} isWinner=${isWinner} ` +
+      `playerTowersAlive=${playerTowersAlive} enemyTowersAlive=${enemyTowersAlive} ` +
+      `playerKingAlive=${playerKingAlive} enemyKingAlive=${enemyKingAlive} ` +
+      `matchEndReason=${matchEndReason} duration=${duration}s`,
+    );
+
     try {
       const response = await fetch(`${supabaseUrl}/functions/v1/record-match`, {
         method: "POST",
