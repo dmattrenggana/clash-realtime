@@ -19,7 +19,16 @@ import {
 } from "./schema/BattleState.js";
 import { scaleStatByLevel } from "../services/clashCards.js";
 
-const TICK_RATE_MS = 100; // 10 Hz server tick
+// 20 Hz server tick (was 10 Hz / 100ms).
+//
+// At 10 Hz the client received a new authoritative position only ten times a
+// second, so between updates the render layer chased a stale target — units
+// travelled in ten visible lurches per second rather than continuously. Every
+// consumer takes tickRateMs as a delta (elixir regen, moveStep, projectile
+// integration, BotBrain.update), and movement is clamped with
+// Math.min(moveStep, distToRoute), so halving the interval changes only how
+// often state is sampled, not how the simulation behaves.
+const TICK_RATE_MS = 50;
 const RECONNECTION_GRACE_SEC = 30;
 const FIELD_BOUND = 100; // |x|, |z| <= 100
 // If a BattleRoom is created (via matchMaker) but the second player never
