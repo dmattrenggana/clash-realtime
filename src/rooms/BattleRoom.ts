@@ -682,6 +682,18 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const playerWallet = player.walletAddress;
     const playerTowersAlive = player.towers.filter(t => t.hp > 0).length;
     const enemyTowersAlive = enemy.towers.filter(t => t.hp > 0).length;
+    // Per-tower king/princess breakdown. In this game each side has 3 towers
+    // in order [princess, king, princess] (see setupPlayerTowers), but we
+    // look up by .type rather than by index so the field ordering stays an
+    // internal detail. Without these the edge function cannot distinguish a
+    // 1-crown king-kill win from a 2-crown draw that ended early — the old
+    // 3-crown-only check recorded both as defeat, so a player who legitimately
+    // destroyed the enemy king saw "outcome: defeat" in match_history and
+    // could not claim $CLASH rewards.
+    const playerKing = player.towers.find(t => t.type === "king");
+    const enemyKing = enemy.towers.find(t => t.type === "king");
+    const playerKingAlive = playerKing ? playerKing.hp > 0 : true;
+    const enemyKingAlive = enemyKing ? enemyKing.hp > 0 : true;
     const cardsDeployed = this.cardsDeployed.get(player.walletAddress) || 0;
     const totalDamageDealt = Math.floor(this.totalDamageDealt.get(player.walletAddress) || 0);
 
@@ -722,6 +734,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         body: JSON.stringify({
           playerTowersAlive,
           enemyTowersAlive,
+          // King-tower state — record-match re-derives outcome from this
+          // proof rather than trusting the body's `outcome` field, so we
+          // must send enough information for a 1- or 2-crown king-kill to
+          // register as a victory.
+          playerKingAlive,
+          enemyKingAlive,
           matchDurationSec: duration,
           cardsDeployed,
           totalDamageDealt,
