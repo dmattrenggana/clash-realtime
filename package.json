@@ -13,7 +13,8 @@
     "loadtest": "tsx loadtest/example.ts --room battle --numClients 2",
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "clean": "rimraf build",
-    "test": "tsc -p tsconfig.json --outDir build && mocha build/test/**.test.js --exit --timeout 15000"
+    "test": "mocha build/test/**.test.js --exit --timeout 15000",
+    "pretest": "tsc -p tsconfig.test.json"
   },
   "author": "",
   "license": "UNLICENSED",

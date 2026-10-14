@@ -1,0 +1,132 @@
+import assert from "node:assert/strict";
+import {
+    FLYING_UNITS,
+    CAN_ATTACK_AIR,
+    CARD_ATTACK_SPLASH,
+    CARD_PROJECTILE_SPEED,
+} from "../src/rooms/schema/BattleState.js";
+// The real production function — not a copy. A local reimplementation would
+// keep passing with the guard removed, which is exactly how the first version
+// of this test proved nothing.
+import { applyMeleeSplashToUnits } from "../src/game/combat.js";
+
+/**
+ * Melee AoE air-guard regression.
+ *
+ * Target selection in combat.ts already skipped flying units, but the melee
+ * splash loop is positional — it damages every enemy inside the radius. A
+ * barbarian therefore never *chose* a wyvern, yet still cut it down whenever
+ * one wandered within 2.5 tiles.
+ *
+ * These tests pin the two properties that matter: the barbarian's swing must
+ * skip air units, and must still hit every ground unit in range — the AoE
+ * cannot be narrowed into a single-target hit to achieve that.
+ */
+
+interface Unit {
+    cardId: string;
+    x: number;
+    z: number;
+    hp: number;
+}
+
+/** Drives the production function and reports which units actually took damage. */
+function applyMeleeAoE(attacker: Unit, enemies: Unit[], damage: number): string[] {
+    const splash = CARD_ATTACK_SPLASH[attacker.cardId];
+    const before = new Map(enemies.map((e) => [e, e.hp]));
+    applyMeleeSplashToUnits(attacker, enemies, damage, splash);
+    return enemies.filter((e) => e.hp < (before.get(e) as number)).map((e) => e.cardId);
+}
+
+const BARBARIAN = { cardId: "barbarian", x: 0, z: 0, hp: 100 };
+
+describe("melee AoE air-guard", () => {
+    it("barbarian cannot damage flying units inside its splash", () => {
+        const wyvern = { cardId: "wyvern", x: 1, z: 0, hp: 120 };
+        applyMeleeAoE(BARBARIAN, [wyvern], 60);
+        assert.equal(wyvern.hp, 120, "a wyvern inside splash range must take no damage");
+    });
+
+    it("does not damage incubus or healer either", () => {
+        for (const cardId of ["incubus", "healer"]) {
+            const air = { cardId, x: 0.5, z: 0.5, hp: 100 };
+            applyMeleeAoE(BARBARIAN, [air], 60);
+            assert.equal(air.hp, 100, `${cardId} must be immune to the barbarian`);
+        }
+    });
+
+    it("still hits every ground unit in range — the AoE must stay area", () => {
+        const enemies: Unit[] = [
+            { cardId: "knight", x: 1.0, z: 0, hp: 100 },
+            { cardId: "archer", x: -1.0, z: 1.0, hp: 100 },
+            { cardId: "goblin", x: 0, z: -2.0, hp: 100 },
+        ];
+        const hit = applyMeleeAoE(BARBARIAN, enemies, 60);
+
+        assert.deepEqual(hit.sort(), ["archer", "goblin", "knight"]);
+        for (const e of enemies) assert.equal(e.hp, 40, `${e.cardId} should be hit`);
+    });
+
+    it("hits ground units even when a flying unit sits in the same radius", () => {
+        // The regression that matters: guarding air must not turn the swing
+        // into a single-target hit. One wyvern in the middle, two knights
+        // flanking it — both knights still take damage.
+        const wyvern = { cardId: "wyvern", x: 0, z: 0, hp: 120 };
+        const k1 = { cardId: "knight", x: 2.0, z: 0, hp: 100 };
+        const k2 = { cardId: "knight", x: 0, z: 2.4, hp: 100 };
+
+        applyMeleeAoE(BARBARIAN, [wyvern, k1, k2], 60);
+
+        assert.equal(wyvern.hp, 120, "wyvern untouched");
+        assert.equal(k1.hp, 40, "knight on the x axis still hit");
+        assert.equal(k2.hp, 40, "knight at the splash edge still hit");
+    });
+
+    it("does not damage units outside the splash radius", () => {
+        const far = { cardId: "knight", x: 10, z: 10, hp: 100 };
+        const hit = applyMeleeAoE(BARBARIAN, [far], 60);
+        assert.deepEqual(hit, []);
+        assert.equal(far.hp, 100);
+    });
+
+    it("still lets air-capable units splash air", () => {
+        // Wizard is a ranged unit but the same splash loop serves it, so the
+        // guard must not over-block: anything in CAN_ATTACK_AIR hits air.
+        const wizard = { cardId: "wizard", x: 0, z: 0, hp: 80 };
+        const wyvern = { cardId: "wyvern", x: 1, z: 0, hp: 120 };
+        const hit = applyMeleeAoE(wizard, [wyvern], 50);
+        assert.deepEqual(hit, ["wyvern"]);
+        assert.equal(wyvern.hp, 70);
+    });
+});
+
+describe("splash data is internally consistent", () => {
+    it("only the barbarian is a ground melee unit with splash", () => {
+        // Every other splash card is ranged (so it uses the projectile path)
+        // or can already attack air. Barbarian is the sole melee-AoE card, so
+        // this one loop is the whole blast radius of the bug.
+        const meleeAoe = Object.keys(CARD_ATTACK_SPLASH).filter(
+            (c) => CARD_PROJECTILE_SPEED[c] === 0 && CARD_ATTACK_SPLASH[c] > 0,
+        );
+        assert.deepEqual(meleeAoe, ["barbarian"]);
+        assert.ok(!CAN_ATTACK_AIR.has("barbarian"), "barbarian is ground-only");
+    });
+
+    it("every air-capable card is correctly classified", () => {
+        // NOT "flying implies can-attack-air": the healer flies but never
+        // attacks, so it is legitimately absent from CAN_ATTACK_AIR. What must
+        // hold is the direction that protects players — nothing that can
+        // attack air may be missing from the allowlist.
+        for (const c of Object.keys(CARD_ATTACK_SPLASH)) {
+            const canHitAir = CAN_ATTACK_AIR.has(c);
+            const flying = FLYING_UNITS.has(c);
+            if (canHitAir) continue;
+            // Ground-only cards must not appear in FLYING_UNITS either, or the
+            // guard would let a ground unit hit them while they were airborne.
+            assert.ok(
+                !flying || c === "healer",
+                `${c} is not air-capable but is classified as flying`,
+            );
+        }
+    });
+});

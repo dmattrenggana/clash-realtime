@@ -8,6 +8,47 @@ import { scaleStatByLevel } from "../services/clashCards.js";
  * Scan closest enemy targets and apply Melee damage or spawn Ranged projectiles.
  * Cooldown-validated based on ATTACK_SPEED of each card.
  */
+/**
+ * Apply melee splash damage to every enemy unit inside the radius.
+ *
+ * Extracted from applyUnitDamage so the air-guard is directly testable — an
+ * inline loop can only be exercised through a full room, which is how this bug
+ * survived: the guard at target selection passed review while the damage loop
+ * below it silently clipped flying units.
+ *
+ * Air-guard: ground units cannot damage flying units. Target selection already
+ * refuses to pick a flying target, but this loop is positional — it hits every
+ * enemy inside the splash radius — so without a guard here the barbarian's
+ * swing still cut down wyverns, incubus and healers that happened to walk
+ * within 2.5 tiles.
+ *
+ * The AoE is deliberately unchanged for ground units: every ground unit in
+ * range still takes the full hit. Only the flying ones the attacker should
+ * never have reached are skipped.
+ *
+ * Returns the damage actually dealt.
+ */
+export function applyMeleeSplashToUnits(
+  attacker: { cardId: string; x: number; z: number },
+  enemies: Array<{ cardId: string; x: number; z: number; hp: number }>,
+  damage: number,
+  splash: number,
+): number {
+  let dealt = 0;
+  enemies.forEach((eUnit) => {
+    if (FLYING_UNITS.has(eUnit.cardId) && !CAN_ATTACK_AIR.has(attacker.cardId)) return;
+    const d = Math.sqrt(
+      Math.pow(eUnit.x - attacker.x, 2) + Math.pow(eUnit.z - attacker.z, 2),
+    );
+    if (d <= splash) {
+      const actualDmg = Math.min(eUnit.hp, damage);
+      eUnit.hp = Math.max(0, eUnit.hp - damage);
+      dealt += actualDmg;
+    }
+  });
+  return dealt;
+}
+
 export function applyUnitDamage(
   players: MapSchemaPlayerLike,
   elapsedSec: number,
@@ -107,14 +148,7 @@ export function applyUnitDamage(
           let dealt = 0;
           if (splash > 0) {
             // Melee AoE (Barbarian)
-            enemy.units.forEach((eUnit) => {
-              const d = Math.sqrt(Math.pow(eUnit.x - unit.x, 2) + Math.pow(eUnit.z - unit.z, 2));
-              if (d <= splash) {
-                const actualDmg = Math.min(eUnit.hp, damage);
-                eUnit.hp = Math.max(0, eUnit.hp - damage);
-                dealt += actualDmg;
-              }
-            });
+            dealt += applyMeleeSplashToUnits(unit, Array.from(enemy.units.values()), damage, splash);
             enemy.towers.forEach((t, idx) => {
               const { x: tx, z: tz } = getTowerCoords(t, enemy.team, idx);
               const d = Math.sqrt(Math.pow(tx - unit.x, 2) + Math.pow(tz - unit.z, 2));
