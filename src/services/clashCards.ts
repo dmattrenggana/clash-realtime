@@ -16,11 +16,38 @@ const CLASH_CARDS_ADDRESS = getAddress(
   "0xF93643759c9C62E0e2E70969E2397806bE5CF609"
 );
 
+// On-chain RPC used for Battle Deck ownership validation in BattleRoom.onJoin.
+//
+// mainnet.base.org is the free public endpoint. It works, but it rate-limits
+// aggressively and returns 413 on the heavier multicall/batch queries that
+// getOwnedCardsOnChain issues — one busy moment and every player trying to
+// join gets rejected with DECK_VALIDATION_FAILED.
+//
+// Preferred: set BASE_RPC_URL to a private endpoint (Alchemy / Infura /
+// QuickNode free tiers all cover Base). When it's absent we fall back to the
+// public node rather than failing outright, and the transport below is tuned
+// to tolerate the flakiness that comes with it.
 const BASE_RPC_URL = process.env.BASE_RPC_URL || "https://mainnet.base.org";
+const USING_PUBLIC_RPC = !process.env.BASE_RPC_URL;
+
+if (USING_PUBLIC_RPC) {
+  console.warn(
+    "[clashCards] BASE_RPC_URL is not set — falling back to the rate-limited " +
+      "public endpoint https://mainnet.base.org. Deck validation may fail " +
+      "under load. Set BASE_RPC_URL to a private RPC to remove this risk.",
+  );
+}
 
 export const publicClient = createPublicClient({
   chain: base,
-  transport: http(BASE_RPC_URL),
+  transport: http(BASE_RPC_URL, {
+    // The public node stalls on batch requests; give it room before we give up.
+    timeout: USING_PUBLIC_RPC ? 15_000 : 10_000,
+    // Retry transient failures (rate limit, gateway blip) instead of failing
+    // the player's join outright.
+    retryCount: 3,
+    retryDelay: 400,
+  }),
 });
 
 /** Map cardId → cardTypeId (0..11). */
