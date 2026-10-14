@@ -254,23 +254,6 @@ function checkWinCondition(state: BattleState, onMatchEnded: (winnerTeam: string
   for (const player of players) {
     const kingTower = player.towers.find((t: Tower) => t.type === "king");
 
-    // DEBUG: surface king HP for both sides so we can see why "Winner: 0"
-    // gets logged even when both kings read as alive at recordMatch time.
-    // Removed once the disconnect is confirmed.
-    if (process.env.DEBUG_KING === "1" || true) {
-      const team0 = players.find((p) => p.team === 0);
-      const team1 = players.find((p) => p.team === 1);
-      const k0 = team0?.towers.find((t: Tower) => t.type === "king");
-      const k1 = team1?.towers.find((t: Tower) => t.type === "king");
-      console.log(
-        `[checkWin][debug] team0.king=${k0 ? `${k0.hp}/${k0.maxHp}` : "undefined"} ` +
-        `team1.king=${k1 ? `${k1.hp}/${k1.maxHp}` : "undefined"} ` +
-        `team0.towers=[${team0?.towers.map((t) => `${t.type}:${t.hp}`).join(",")}] ` +
-        `team1.towers=[${team1?.towers.map((t) => `${t.type}:${t.hp}`).join(",")}] ` +
-        `elapsedSec=${state.elapsedSec}`,
-      );
-    }
-
     // If a player's King Tower is destroyed, they lose immediately!
     if (kingTower && kingTower.hp <= 0) {
       const winner = players.find((p) => p.team !== player.team);

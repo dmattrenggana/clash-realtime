@@ -723,16 +723,6 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
     console.log(`[BattleRoom] Attempting to record match server-side for wallet: ${playerWallet} (isWinner: ${isWinner}, isAgent: ${isAgentForRecord})...`);
 
-    // DEBUG: emit the king/tower state we are about to send so we can verify
-    // the next match on the live server. Removed once the
-    // "1-crown king-kill recorded as defeat" regression is confirmed gone.
-    console.log(
-      `[BattleRoom][debug-proof] wallet=${playerWallet} isWinner=${isWinner} ` +
-      `playerTowersAlive=${playerTowersAlive} enemyTowersAlive=${enemyTowersAlive} ` +
-      `playerKingAlive=${playerKingAlive} enemyKingAlive=${enemyKingAlive} ` +
-      `matchEndReason=${matchEndReason} duration=${duration}s`,
-    );
-
     try {
       const response = await fetch(`${supabaseUrl}/functions/v1/record-match`, {
         method: "POST",
@@ -839,14 +829,26 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     //     match_history.
     //   - If only 1 player is left (e.g. bot match where the bot is
     //     the only one still in the room), record just that one.
-    const playerList = Array.from(this.state.players.values())
-      .filter((p) => !p.walletAddress.startsWith("0xbot_"));
+    //
+    // BUGFIX (2026-10-14): The previous implementation filtered bots out
+    // of playerList, then used `loser || winner` to fill the opponent
+    // slot in recordMatchToServerSide. For a human vs bot match that
+    // meant enemy === winner === the same Player object — both
+    // .towers references pointed at the human's towers, and enemyKingAlive
+    // read as true even when the bot's king was at 0 HP. The edge
+    // function then fell through to the safe-default "defeat" branch and
+    // every bot-match win (including legit 1- or 2-crown king kills) was
+    // recorded as a loss. Find winner/loser from the full players map
+    // (including bots) so the opponent's actual tower state is what gets
+    // sent.
+    const allPlayers = Array.from(this.state.players.values());
+    const playerList = allPlayers.filter((p) => !p.walletAddress.startsWith("0xbot_"));
 
     if (playerList.length >= 1) {
       const winnerIdx = this.state.winnerTeam === "0" ? 0 : 1;
       const loserIdx = winnerIdx === 0 ? 1 : 0;
-      const winner = playerList.find((p) => p.team === winnerIdx);
-      const loser = playerList.find((p) => p.team === loserIdx);
+      const winner = allPlayers.find((p) => p.team === winnerIdx);
+      const loser = allPlayers.find((p) => p.team === loserIdx);
 
       if (winner) {
         this.recordMatchToServerSide(winner, loser || winner, this.state.elapsedSec, true, reason);
