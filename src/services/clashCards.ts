@@ -50,7 +50,7 @@ export const publicClient = createPublicClient({
   }),
 });
 
-/** Map cardId → cardTypeId (0..11). */
+/** Map cardId → cardTypeId (0..12). */
 export const CARD_TYPE_IDS: Record<string, number> = {
   knight: 0,
   archer: 1,
@@ -64,6 +64,7 @@ export const CARD_TYPE_IDS: Record<string, number> = {
   barrel_bomb: 9,
   meteor: 10,
   incubus: 11,
+  robinhood: 12,
 };
 
 /** Reverse: cardTypeId → cardId. */
