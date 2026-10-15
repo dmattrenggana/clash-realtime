@@ -44,7 +44,7 @@ export const CARD_RANGE: Record<string, number> = {
   knight: 1.5, archer: 5.0, giant: 2.0, wyvern: 6.0, wizard: 4.5,
   goblin: 1.5, barbarian: 1.5, healer: 4.5, gunslinger: 5.5,
   barrel_bomb: 1.2, meteor: 1.5, incubus: 2.0,
-  robinhood: 10.0,
+  robinhood: 12.0,
 };
 
 // Projectile speed (units per second). If 0, the attack is melee/instant and spawns no projectile.
@@ -60,7 +60,13 @@ export const CARD_ATTACK_SPLASH: Record<string, number> = {
   knight: 0, archer: 0, giant: 0, wyvern: 2.0, wizard: 2.0,
   goblin: 0, barbarian: 2.5, healer: 1.8, gunslinger: 0,
   barrel_bomb: 0, meteor: 0, incubus: 0,
-  robinhood: 0,
+  // 2026-10-16: Robinhood gains AoE. A lobbed archer shell is a
+  // splash-on-impact design — the arc apex is what sells it, and it
+  // pairs with the 12-unit range so a bridge hold can punish a tight
+  // push rather than needing a clean single-target line. 1.8 matches
+  // Healer (the other lobbed unit) and stays below Barbarian's 2.5,
+  // so it still feels like a light single hit against a spread deck.
+  robinhood: 1.8,
 };
 
 // Hit-points per card. Mirrors client CARDS[cardId].hp, except
@@ -109,7 +115,7 @@ export const CARD_SPAWN_COUNT: Record<string, number> = {
 export const FLYING_UNITS: Set<string> = new Set(["wyvern", "incubus", "healer"]);
 
 /** Set of units that can attack flying/air targets. Melee ground units cannot hit air. */
-export const CAN_ATTACK_AIR: Set<string> = new Set(["archer", "wyvern", "wizard", "gunslinger", "incubus"]);
+export const CAN_ATTACK_AIR: Set<string> = new Set(["archer", "wyvern", "wizard", "gunslinger", "incubus", "robinhood"]);
 
 /**
  * Server-side spell-card metadata (mirror of client's cards.ts).
