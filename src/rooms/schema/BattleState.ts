@@ -44,7 +44,7 @@ export const CARD_RANGE: Record<string, number> = {
   knight: 1.5, archer: 5.0, giant: 2.0, wyvern: 6.0, wizard: 4.5,
   goblin: 1.5, barbarian: 1.5, healer: 4.5, gunslinger: 5.5,
   barrel_bomb: 1.2, meteor: 1.5, incubus: 2.0,
-  robinhood: 5.0,
+  robinhood: 10.0,
 };
 
 // Projectile speed (units per second). If 0, the attack is melee/instant and spawns no projectile.
