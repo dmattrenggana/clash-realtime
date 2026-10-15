@@ -28,7 +28,21 @@ export const CARD_ATTACK_SPEED: Record<string, number> = {
   // as the regular archer but a different character model + a unique
   // walk animation (Walk_Forward_with_Bow_Aimed) and a longer attack
   // animation, hence the slightly longer cooldown.
-  robinhood: 1.0,
+  //
+  // 2026-10-16: 1.0 → 4.0 to match the attack clip's actual duration.
+  // The Mixamo attack clip in robinhood.glb is 4.00s long (the draw-and-
+  // release plus the follow-through), but at a 1.0s cooldown the server
+  // started the next attack while the animation was still 75% through —
+  // the release visibly snapped back to idle mid-draw and restarted, so
+  // the bow-and-arrow read never completed on screen. Matching the
+  // cooldown to the clip means the animation now plays start to finish
+  // before the next shot.
+  //
+  // Balance note: this takes Robinhood from 20 dmg/s to 5 dmg/s, which is
+  // a large nerf. If the animation still needs to finish but the DPS
+  // should not drop that far, the follow-up lever is to raise
+  // CARD_ATTACK_DAMAGE rather than shortening the cooldown back.
+  robinhood: 4.0,
 };
 
 // Attack damage per hit. Mirrors client CARDS[cardId].damage.
