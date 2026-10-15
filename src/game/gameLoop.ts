@@ -18,7 +18,14 @@ export function tickGame(
 ): void {
   if (state.status !== "playing") return;
 
-  state.elapsedSec = Math.floor((Date.now() - gameStartTime) / 1000);
+  // 2026-10-15: dual-write elapsedSec (integer seconds, for the HUD timer
+  // and MAX_DURATION check) and elapsedMs (raw milliseconds, for client-side
+  // snapshot interpolation). elapsedMs MUST NOT be floored — its whole job
+  // is to give two consecutive 50ms samples distinct timestamps so the
+  // linear interpolation between them has a non-zero span. See
+  // BattleState.elapsedMs comment and src/game/snapshotBuffer.ts.
+  state.elapsedMs = Date.now() - gameStartTime;
+  state.elapsedSec = Math.floor(state.elapsedMs / 1000);
 
   // 1. Regen Elixir
   state.players.forEach((p: Player) => {

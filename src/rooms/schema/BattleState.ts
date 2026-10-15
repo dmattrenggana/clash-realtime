@@ -225,7 +225,20 @@ export class Player extends Schema {
 export class BattleState extends Schema {
   @type({ map: Player }) players = new MapSchema<Player>();
   @type({ map: Projectile }) projectiles = new MapSchema<Projectile>(); // Track active projectiles
+  // elapsedSec is the integer-second count, kept for the HUD timer and the
+  // MAX_DURATION (600s) win-condition check. UI displays and game logic that
+  // want a sub-second resolution read elapsedMs instead.
   @type("uint16") elapsedSec: number = 0;
+  // High-resolution timestamp in ms since match start. Set every tick in
+  // gameLoop.ts and used as the authoritative time-stamp for snapshot
+  // interpolation on the client. uint32 holds ~50 days, more than enough
+  // for a single match. The client must NOT use Math.floor on this value —
+  // its whole purpose is to be sub-second so two consecutive 50ms samples
+  // have distinct timestamps and the linear interpolation between them has
+  // a non-zero span. (Previously the client used elapsedSec and the span
+  // degenerated to 0 within any one-second window, which made the unit
+  // appear to "teleport" each time the buffer evicted its oldest sample.)
+  @type("uint32") elapsedMs: number = 0;
   @type("string") status: string = "waiting"; // waiting | playing | ended
   @type("string") winnerTeam: string = "";
   @type("string") seed: string = "";
