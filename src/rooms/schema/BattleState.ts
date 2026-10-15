@@ -24,6 +24,11 @@ export const CARD_ATTACK_SPEED: Record<string, number> = {
   knight: 1.2, archer: 0.8, giant: 1.5, wyvern: 1.4, wizard: 1.2,
   goblin: 1.0, barbarian: 1.3, healer: 1.8, gunslinger: 1.0,
   barrel_bomb: 0, meteor: 0, incubus: 1.0,
+  // 2026-10-15: Robinhood — new archer-tier ranged DPS. Same combat profile
+  // as the regular archer but a different character model + a unique
+  // walk animation (Walk_Forward_with_Bow_Aimed) and a longer attack
+  // animation, hence the slightly longer cooldown.
+  robinhood: 1.0,
 };
 
 // Attack damage per hit. Mirrors client CARDS[cardId].damage.
@@ -31,6 +36,7 @@ export const CARD_ATTACK_DAMAGE: Record<string, number> = {
   knight: 25, archer: 20, giant: 25, wyvern: 25, wizard: 30,
   goblin: 15, barbarian: 25, healer: 15, gunslinger: 40,
   barrel_bomb: 55, meteor: 70, incubus: 15,
+  robinhood: 20,
 };
 
 // Attack Range in units. Mirrors client CARDS[cardId].range.
@@ -38,6 +44,7 @@ export const CARD_RANGE: Record<string, number> = {
   knight: 1.5, archer: 5.0, giant: 2.0, wyvern: 6.0, wizard: 4.5,
   goblin: 1.5, barbarian: 1.5, healer: 4.5, gunslinger: 5.5,
   barrel_bomb: 1.2, meteor: 1.5, incubus: 2.0,
+  robinhood: 5.0,
 };
 
 // Projectile speed (units per second). If 0, the attack is melee/instant and spawns no projectile.
@@ -45,6 +52,7 @@ export const CARD_PROJECTILE_SPEED: Record<string, number> = {
   knight: 0, archer: 8.0, giant: 0, wyvern: 6.0, wizard: 6.0,
   goblin: 0, barbarian: 0, healer: 6.0, gunslinger: 10.0,
   barrel_bomb: 0, meteor: 0, incubus: 8.0,
+  robinhood: 8.0,
 };
 
 // Attack Splash Radius (AoE). If > 0, hits all enemies within this radius.
@@ -52,6 +60,7 @@ export const CARD_ATTACK_SPLASH: Record<string, number> = {
   knight: 0, archer: 0, giant: 0, wyvern: 2.0, wizard: 2.0,
   goblin: 0, barbarian: 2.5, healer: 1.8, gunslinger: 0,
   barrel_bomb: 0, meteor: 0, incubus: 0,
+  robinhood: 0,
 };
 
 // Hit-points per card. Mirrors client CARDS[cardId].hp, except
@@ -64,12 +73,14 @@ export const CARD_HP: Record<string, number> = {
   knight: 150, archer: 120, giant: 400, wyvern: 120, wizard: 100,
   goblin: 60, barbarian: 180, healer: 110, gunslinger: 110,
   barrel_bomb: 1, meteor: 1, incubus: 60,
+  robinhood: 120,
 };
 
 export const CARD_COST: Record<string, number> = {
   knight: 3, archer: 2, giant: 5, wyvern: 4, wizard: 4,
   goblin: 2, barbarian: 3, healer: 4, gunslinger: 4,
   barrel_bomb: 2, meteor: 3, incubus: 2,
+  robinhood: 2,
 };
 
 // BUGFIX (2026-06-17): movement speed per-card (units per second).
@@ -84,12 +95,14 @@ export const CARD_MOVE_SPEED: Record<string, number> = {
   knight: 2.5, archer: 3.0, giant: 1.5, wyvern: 2.5, wizard: 2.5,
   goblin: 3.5, barbarian: 2.5, healer: 2.0, gunslinger: 3.0,
   barrel_bomb: 0, meteor: 0, incubus: 3.5,
+  robinhood: 3.0,
 };
 
 export const CARD_SPAWN_COUNT: Record<string, number> = {
   knight: 1, archer: 1, giant: 1, wyvern: 1, wizard: 1,
   goblin: 3, barbarian: 1, healer: 1, gunslinger: 1,
   barrel_bomb: 1, meteor: 1, incubus: 3,
+  robinhood: 1,
 };
 
 /** Set of units that fly. Flying units ignore ground unit collisions. */
