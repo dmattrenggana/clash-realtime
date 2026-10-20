@@ -38,11 +38,10 @@ export const CARD_ATTACK_SPEED: Record<string, number> = {
   // cooldown to the clip means the animation now plays start to finish
   // before the next shot.
   //
-  // Balance note: this takes Robinhood from 20 dmg/s to 5 dmg/s, which is
-  // a large nerf. If the animation still needs to finish but the DPS
-  // should not drop that far, the follow-up lever is to raise
-  // CARD_ATTACK_DAMAGE rather than shortening the cooldown back.
-  robinhood: 4.0,
+  // 2026-10-20: 4.0 -> 3.0. The clip is 4.00s but a 3s cooldown is
+  // close enough that the release still reads, and it buys back a
+  // third of the DPS. Damage was raised alongside (20 -> 25).
+  robinhood: 3.0,
 };
 
 // Attack damage per hit. Mirrors client CARDS[cardId].damage.
@@ -50,7 +49,8 @@ export const CARD_ATTACK_DAMAGE: Record<string, number> = {
   knight: 25, archer: 20, giant: 25, wyvern: 25, wizard: 30,
   goblin: 15, barbarian: 25, healer: 15, gunslinger: 40,
   barrel_bomb: 55, meteor: 70, incubus: 15,
-  robinhood: 20,
+  // 2026-10-20: 20 -> 25 to go with the Epic stat line.
+  robinhood: 25,
 };
 
 // Attack Range in units. Mirrors client CARDS[cardId].range.
@@ -77,10 +77,10 @@ export const CARD_ATTACK_SPLASH: Record<string, number> = {
   // 2026-10-16: Robinhood gains AoE. A lobbed archer shell is a
   // splash-on-impact design — the arc apex is what sells it, and it
   // pairs with the 12-unit range so a bridge hold can punish a tight
-  // push rather than needing a clean single-target line. 1.8 matches
-  // Healer (the other lobbed unit) and stays below Barbarian's 2.5,
-  // so it still feels like a light single hit against a spread deck.
-  robinhood: 1.8,
+  // push rather than needing a clean single-target line.
+  // 2026-10-20: 1.8 -> 2.5, matching Barbarian's AoE now that the
+  // card moved up to Epic.
+  robinhood: 2.5,
 };
 
 // Hit-points per card. Mirrors client CARDS[cardId].hp, except
@@ -93,14 +93,16 @@ export const CARD_HP: Record<string, number> = {
   knight: 150, archer: 120, giant: 400, wyvern: 120, wizard: 100,
   goblin: 60, barbarian: 180, healer: 110, gunslinger: 110,
   barrel_bomb: 1, meteor: 1, incubus: 60,
-  robinhood: 120,
+  // 2026-10-20: 120 -> 150 with the Epic stat line.
+  robinhood: 150,
 };
 
 export const CARD_COST: Record<string, number> = {
   knight: 3, archer: 2, giant: 5, wyvern: 4, wizard: 4,
   goblin: 2, barbarian: 3, healer: 4, gunslinger: 4,
   barrel_bomb: 2, meteor: 3, incubus: 2,
-  robinhood: 2,
+  // 2026-10-20: 2 -> 3 elixir with the Epic stat line.
+  robinhood: 3,
 };
 
 // BUGFIX (2026-06-17): movement speed per-card (units per second).
