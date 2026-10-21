@@ -72,8 +72,20 @@ export const CARD_IDS_BY_TYPE: Record<number, string> = Object.fromEntries(
   Object.entries(CARD_TYPE_IDS).map(([id, type]) => [type, id])
 );
 
-/** Max card level (per ClashCards contract maxLevel()). */
-export const MAX_CARD_LEVEL = 9;
+/**
+ * Max card level (per ClashCards contract maxLevel()).
+ *
+ * 2026-10-21: 9 -> 10. The contract reports maxLevel() = 10 and the
+ * dashboard already treats level 10 as MAX, so 9 was wrong on both
+ * sides. More importantly this constant bounds the ownership scan
+ * loops below, which meant level-10 NFTs were never queried at all —
+ * a player holding one would have had it silently treated as unowned,
+ * which fails deck validation with INVALID_DECK_SIZE.
+ *
+ * Side effect: the balance scan goes from 12 types x 9 levels = 108
+ * balanceOf calls to 120.
+ */
+export const MAX_CARD_LEVEL = 10;
 
 /**
  * Encode (cardTypeId, level) → tokenId.
@@ -151,7 +163,7 @@ export function _getOwnershipCacheSize(): number {
  *   3. Sum total balances for this card type.
  *
  * Performance:
- *   12 card types × MAX_CARD_LEVEL (9) = 108 balanceOf calls.
+ *   12 card types × MAX_CARD_LEVEL (10) = 120 balanceOf calls.
  *   Run in parallel via Promise.all — ~500ms-2s on Base mainnet.
  */
 export async function getOwnedCardsOnChain(
@@ -255,9 +267,15 @@ export async function getBalanceOnChain(
 /**
  * Card level multiplier for HP and damage scaling.
  * Source of truth: Clash Royale-style curve, +10% per level above L1.
- *   L1 = 1.0, L2 = 1.10, L3 = 1.20, ..., L9 = 1.80
+ *   L1 = 1.0, L2 = 1.10, L3 = 1.20, ..., L10 = 1.90
  *
  * L1 NFTs do NO scaling — they use base stats as-is.
+ *
+ * 2026-10-21: added 10: 1.90. The table stopped at L9, and
+ * getLevelMultiplier falls back to 1.0 for anything missing, so an L10
+ * card silently got L1 stats — the top level of the game was the
+ * weakest-scaling tier. MAX_CARD_LEVEL was also 9, so L10 could not
+ * even be reached; both are fixed together.
  */
 export const LEVEL_MULTIPLIERS: Record<number, number> = {
   1: 1.00,
@@ -269,6 +287,7 @@ export const LEVEL_MULTIPLIERS: Record<number, number> = {
   7: 1.60,
   8: 1.70,
   9: 1.80,
+  10: 1.90,
 };
 
 export function getLevelMultiplier(level: number): number {
