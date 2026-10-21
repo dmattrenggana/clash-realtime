@@ -41,7 +41,14 @@ export const CARD_ATTACK_SPEED: Record<string, number> = {
   // 2026-10-20: 4.0 -> 3.0. The clip is 4.00s but a 3s cooldown is
   // close enough that the release still reads, and it buys back a
   // third of the DPS. Damage was raised alongside (20 -> 25).
-  robinhood: 3.0,
+  //
+  // 2026-10-21: 3.0 -> 2.5, damage 25 -> 30. Playtested against the
+  // archer: at a 3.0s cooldown Robinhood sat at 8.3 dps, the lowest
+  // non-support troop in the roster, which did not read as "Epic" at
+  // all. 2.5s at 30 damage lands on exactly 12.0 dps — a 44% buff and
+  // still the longest-attack-cd archer, so the 4.00s clip gets 62% of
+  // its runtime before the next draw begins instead of 75%.
+  robinhood: 2.5,
 };
 
 // Attack damage per hit. Mirrors client CARDS[cardId].damage.
@@ -50,7 +57,10 @@ export const CARD_ATTACK_DAMAGE: Record<string, number> = {
   goblin: 15, barbarian: 25, healer: 15, gunslinger: 40,
   barrel_bomb: 55, meteor: 70, incubus: 15,
   // 2026-10-20: 20 -> 25 to go with the Epic stat line.
-  robinhood: 25,
+  // 2026-10-21: 25 -> 30 alongside the 3.0 -> 2.5 cooldown change, so
+  // Robinhood lands on 12.0 dps rather than 8.3. Cost, HP, range and
+  // splash are unchanged.
+  robinhood: 30,
 };
 
 // Attack Range in units. Mirrors client CARDS[cardId].range.
