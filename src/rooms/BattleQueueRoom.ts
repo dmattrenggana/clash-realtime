@@ -55,6 +55,11 @@ export class BattleQueueRoom extends Room {
   // giving up and sending matchmakingFailed to the client)
   private botFallbackRetries = new Map<string, number>();
   private static readonly MAX_BOT_FALLBACK_RETRIES = 3;
+  // 2026-10-22: pairing failures (createRoom / reserveSeatFor throwing).
+  // Without a bound the re-queue path could retry forever; with it we can
+  // tell the client to stop waiting instead of hanging on "Finding opponent".
+  private pairingFailures = new Map<string, number>();
+  private static readonly MAX_PAIRING_ATTEMPTS = 3;
 
   onCreate(_options: any) {
     console.log(`[BattleQueue] Created`);
@@ -127,15 +132,30 @@ export class BattleQueueRoom extends Room {
     client.send("queued", { position: this.pending.size });
 
     // Arm a matchmaking timeout for this player to fallback to AI Bot
-    const timeout = this.clock.setTimeout(() => {
-      this.triggerSinglePlayerBotMatch(client.sessionId);
-    }, MATCHMAKING_TIMEOUT_MS);
-    this.matchmakingTimeouts.set(client.sessionId, timeout);
+    this.armMatchmakingTimeout(client.sessionId);
 
     if (this.pending.size >= QUEUE_TARGET) {
       // Don't await — fire and continue. matchPlayers handles errors.
       void this.matchPlayers();
     }
+  }
+
+  /**
+   * Arm (or re-arm) the AI-bot fallback timer for a queued player.
+   *
+   * This MUST be re-armed whenever a player is put back into `pending`
+   * after a failed pairing attempt, otherwise they sit in the queue
+   * forever with no fallback and no way out of "Finding opponent".
+   *
+   * @param budgetMs remaining budget when re-arming; omit for a full window.
+   */
+  private armMatchmakingTimeout(sessionId: string, budgetMs = MATCHMAKING_TIMEOUT_MS): void {
+    const existing = this.matchmakingTimeouts.get(sessionId);
+    if (existing) existing.clear();
+    const timeout = this.clock.setTimeout(() => {
+      this.triggerSinglePlayerBotMatch(sessionId);
+    }, Math.max(1_000, budgetMs));
+    this.matchmakingTimeouts.set(sessionId, timeout);
   }
 
   onLeave(client: Client) {
@@ -151,6 +171,7 @@ export class BattleQueueRoom extends Room {
 
     // Clean up bot fallback retry counter
     this.botFallbackRetries.delete(client.sessionId);
+    this.pairingFailures.delete(client.sessionId);
 
     // If the client was mid-handoff, clean up so the timeout doesn't
     // fire on a session that's already gone.
@@ -189,17 +210,15 @@ export class BattleQueueRoom extends Room {
     this.pending.delete(idA);
     this.pending.delete(idB);
 
-    // Clear matchmaking timeouts of both paired players
-    const timeoutA = this.matchmakingTimeouts.get(idA);
-    if (timeoutA) {
-      timeoutA.clear();
-      this.matchmakingTimeouts.delete(idA);
-    }
-    const timeoutB = this.matchmakingTimeouts.get(idB);
-    if (timeoutB) {
-      timeoutB.clear();
-      this.matchmakingTimeouts.delete(idB);
-    }
+    // 2026-10-22: the AI-bot fallback timers are deliberately NOT cleared
+    // here. They used to be cleared before the fallible createRoom /
+    // reserveSeatFor calls, so any failure below re-queued the pair with
+    // no fallback timer and no trigger to pair them again (matchPlayers is
+    // only invoked from onJoin). Both clients then sat in `matching`
+    // forever and the loader showed "FINDING OPPONENT..." indefinitely.
+    // The timers are cleared only once the handoff is genuinely committed,
+    // and the catch path re-arms them.
+    const deadline = Date.now() + MATCHMAKING_TIMEOUT_MS;
 
     try {
       // 1. Create the battle room
@@ -226,13 +245,71 @@ export class BattleQueueRoom extends Room {
       // 3. Start handoff for each client
       const clientA = this.clients.find((c) => c.sessionId === idA);
       const clientB = this.clients.find((c) => c.sessionId === idB);
-      if (clientA) this.startHandoff(clientA, resA, battleRoom.roomId);
-      if (clientB) this.startHandoff(clientB, resB, battleRoom.roomId);
+      // If either client already left, abandon the pairing. Sending
+      // matchFound to only one side would leave that player waiting in a
+      // BattleRoom for an opponent who never arrives.
+      if (!clientA || !clientB) {
+        throw new Error(`paired client missing (A=${Boolean(clientA)}, B=${Boolean(clientB)})`);
+      }
+
+      // The pair is now committed: clear the AI-bot fallback timers.
+      for (const id of [idA, idB]) {
+        const t = this.matchmakingTimeouts.get(id);
+        if (t) t.clear();
+        this.matchmakingTimeouts.delete(id);
+        this.pairingFailures.delete(id);
+      }
+
+      this.startHandoff(clientA, resA, battleRoom.roomId);
+      this.startHandoff(clientB, resB, battleRoom.roomId);
     } catch (err) {
       console.error(`[BattleQueue] matchPlayers failed:`, err);
+
       // Best-effort: put them back at the front of the queue
       if (a) this.pending.set(idA, a);
       if (b) this.pending.set(idB, b);
+
+      // Bound the retries. Past the limit we tell the client instead of
+      // letting it wait on "Finding opponent..." with nothing coming.
+      const giveUp: string[] = [];
+      for (const [id, player] of [[idA, a], [idB, b]] as const) {
+        if (!player || !this.pending.has(id)) continue;
+        const attempts = (this.pairingFailures.get(id) ?? 0) + 1;
+        this.pairingFailures.set(id, attempts);
+        if (attempts > BattleQueueRoom.MAX_PAIRING_ATTEMPTS) {
+          giveUp.push(id);
+        } else {
+          // Re-arm with whatever budget is left so a transient error can't
+          // strand the player with no path out of the queue.
+          this.armMatchmakingTimeout(id, deadline - Date.now());
+        }
+      }
+
+      for (const id of giveUp) {
+        const player = this.pending.get(id);
+        this.pending.delete(id);
+        const t = this.matchmakingTimeouts.get(id);
+        if (t) t.clear();
+        this.matchmakingTimeouts.delete(id);
+        this.pairingFailures.delete(id);
+        const client = this.clients.find((c) => c.sessionId === id);
+        console.error(
+          `[BattleQueue] pairing FAILED ${BattleQueueRoom.MAX_PAIRING_ATTEMPTS}x for ${id} ` +
+          `(wallet: ${player?.wallet}) — sending matchmakingFailed`,
+        );
+        if (client) {
+          client.send("matchmakingFailed", {
+            reason: "Could not start a match right now. Please try again.",
+          });
+        }
+      }
+
+      // Re-trigger pairing: onJoin will not fire again for players who are
+      // already in the room, so without this the re-queued pair waits for
+      // their bot fallback even though another player is sitting right there.
+      if (this.pending.size >= QUEUE_TARGET) {
+        setTimeout(() => { void this.matchPlayers(); }, 500);
+      }
     }
   }
 
