@@ -30,6 +30,11 @@ export const CARD_ATTACK_SPEED: Record<string, number> = {
   // animation, hence the slightly longer cooldown.
   //
   // 2026-10-16: 1.0 → 4.0 to match the attack clip's actual duration.
+  // 2026-10-20 (perf/balance): 4.0 → 3.0 → 2.5s together with the Epic
+  // stat line (30 damage). The cooldown is a BALANCE value, not the clip
+  // length - the Mixamo attack clip in robinhood.glb is still 4.00s long
+  // (the draw-and-release plus the follow-through), so at 2.5s the next
+  // draw starts before the previous one fully finishes.
   // The Mixamo attack clip in robinhood.glb is 4.00s long (the draw-and-
   // release plus the follow-through), but at a 1.0s cooldown the server
   // started the next attack while the animation was still 75% through —
