@@ -18,7 +18,7 @@ import {
   SPELL_CARDS,
 } from "./schema/BattleState.js";
 import { scaleStatByLevel } from "../services/clashCards.js";
-import { parseSupportedChain } from "../chain/index.js";
+import { parseSupportedChain, type SupportedChain } from "../chain/index.js";
 
 // 20 Hz server tick (was 10 Hz / 100ms).
 //
@@ -113,6 +113,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   // higher message-rate limit (the default of 30 was meant for
   // player actions like deployCard / surrender).
   private spectatorCount = 0;
+
+  // Which chain each player battles on, keyed by wallet address.
+  // Set in onJoin from the join options; used when the match is recorded
+  // so the match_history row lands on the right chain.
+  private playerChains = new Map<string, SupportedChain>();
 
   /**
    * Update the room's matchmake metadata with the current player
@@ -378,6 +383,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // Fallback awal (tidak dipercaya 100%)
     const fallbackNickname = String(options?.nickname || "Anonymous");
 
+    // Which chain this player battles on. Kept outside the schema (the client
+    // does not need it) and keyed by the wallet address.
+    const playerChain = parseSupportedChain(options?.chain);
+    this.playerChains.set(wallet.toLowerCase(), playerChain);
+
     const team = this.state.players.size;
     const player = new Player();
     player.walletAddress = wallet;
@@ -463,8 +473,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           const { getOwnedCardsOnChain } = await import('../services/clashCards.js');
           // The chain the player battles on decides which contracts validate
           // deck ownership. Default Base keeps every existing client working.
-          const battleChain = parseSupportedChain(options?.chain);
-          const owned = await getOwnedCardsOnChain(wallet, battleChain);
+          const owned = await getOwnedCardsOnChain(wallet, playerChain);
           const ownershipMap = new Map(owned.map((o) => [o.cardId, o]));
 
           const validDeck: string[] = [];
@@ -749,6 +758,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           totalDamageDealt,
           playerWallet,
           outcome: isWinner ? "victory" : "defeat",
+          // The chain the match was played on — the match_history row is
+          // chain-scoped (the profile itself stays shared).
+          chain: this.playerChains.get(playerWallet.toLowerCase()) ?? "base",
           // Match end reason: "normal" (tower destroyed), "surrender",
           // or "opponent_left" (other player disconnected mid-match).
           // For "opponent_left" the server records the match with
