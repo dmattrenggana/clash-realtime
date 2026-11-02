@@ -18,6 +18,7 @@ import {
   SPELL_CARDS,
 } from "./schema/BattleState.js";
 import { scaleStatByLevel } from "../services/clashCards.js";
+import { parseSupportedChain } from "../chain/index.js";
 
 // 20 Hz server tick (was 10 Hz / 100ms).
 //
@@ -460,7 +461,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
             throw new Error(`INVALID_DECK_SIZE: Need 8 cards, got ${clientDeck.length}`);
           }
           const { getOwnedCardsOnChain } = await import('../services/clashCards.js');
-          const owned = await getOwnedCardsOnChain(wallet);
+          // The chain the player battles on decides which contracts validate
+          // deck ownership. Default Base keeps every existing client working.
+          const battleChain = parseSupportedChain(options?.chain);
+          const owned = await getOwnedCardsOnChain(wallet, battleChain);
           const ownershipMap = new Map(owned.map((o) => [o.cardId, o]));
 
           const validDeck: string[] = [];

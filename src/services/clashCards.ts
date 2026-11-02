@@ -10,11 +10,7 @@
 // find the maximum level owned (>= 1 NFT), and return that for battle scaling.
 
 import { createPublicClient, http, getAddress, type Address } from "viem";
-import { base } from "viem/chains";
-
-const CLASH_CARDS_ADDRESS = getAddress(
-  "0xF93643759c9C62E0e2E70969E2397806bE5CF609"
-);
+import { getChainConfig, type SupportedChain } from "../chain/index.js";
 
 // On-chain RPC used for Battle Deck ownership validation in BattleRoom.onJoin.
 //
@@ -27,28 +23,47 @@ const CLASH_CARDS_ADDRESS = getAddress(
 // QuickNode free tiers all cover Base). When it's absent we fall back to the
 // public node rather than failing outright, and the transport below is tuned
 // to tolerate the flakiness that comes with it.
-const BASE_RPC_URL = process.env.BASE_RPC_URL || "https://mainnet.base.org";
-const USING_PUBLIC_RPC = !process.env.BASE_RPC_URL;
+/**
+ * Per-chain public clients.
+ *
+ * The Base client uses the private RPC when BASE_RPC_URL is set: the public
+ * node stalls on batch requests, and one busy moment would reject every
+ * player trying to join. The Robinhood client uses ROBINHOOD_RPC_URL.
+ */
+const clients = new Map<SupportedChain, ReturnType<typeof createPublicClient>>();
 
-if (USING_PUBLIC_RPC) {
-  console.warn(
-    "[clashCards] BASE_RPC_URL is not set — falling back to the rate-limited " +
-      "public endpoint https://mainnet.base.org. Deck validation may fail " +
-      "under load. Set BASE_RPC_URL to a private RPC to remove this risk.",
-  );
+function getClient(chain: SupportedChain) {
+  const cached = clients.get(chain);
+  if (cached) return cached;
+
+  const config = getChainConfig(chain);
+  const usingPublicRpc =
+    chain === 'base'
+      ? !process.env.BASE_RPC_URL
+      : !process.env.ROBINHOOD_RPC_URL;
+
+  if (usingPublicRpc) {
+    console.warn(
+      `[clashCards] ${chain.toUpperCase()} RPC is not set — falling back to the ` +
+        `public endpoint ${config.rpcUrl}. Deck validation may fail under load.`,
+    );
+  }
+
+  const client = createPublicClient({
+    chain: config.viemChain,
+    transport: http(config.rpcUrl, {
+      // The public node stalls on batch requests; give it room before we give up.
+      timeout: usingPublicRpc ? 15_000 : 10_000,
+      // Retry transient failures (rate limit, gateway blip) instead of failing
+      // the player's join outright.
+      retryCount: 3,
+      retryDelay: 400,
+    }),
+  });
+
+  clients.set(chain, client);
+  return client;
 }
-
-export const publicClient = createPublicClient({
-  chain: base,
-  transport: http(BASE_RPC_URL, {
-    // The public node stalls on batch requests; give it room before we give up.
-    timeout: USING_PUBLIC_RPC ? 15_000 : 10_000,
-    // Retry transient failures (rate limit, gateway blip) instead of failing
-    // the player's join outright.
-    retryCount: 3,
-    retryDelay: 400,
-  }),
-});
 
 /** Map cardId → cardTypeId (0..12). */
 export const CARD_TYPE_IDS: Record<string, number> = {
@@ -167,13 +182,20 @@ export function _getOwnershipCacheSize(): number {
  *   Run in parallel via Promise.all — ~500ms-2s on Base mainnet.
  */
 export async function getOwnedCardsOnChain(
-  wallet: Address | string
+  wallet: Address | string,
+  chain: SupportedChain = 'base'
 ): Promise<CardOwnership[]> {
   const walletAddr = getAddress(wallet);
+  const config = getChainConfig(chain);
+  const CLASH_CARDS_ADDRESS = config.clashCardsAddress;
+  const publicClient = getClient(chain);
 
   // Check cache first (TTL 30s). Avoids RPC hits for repeat battles
   // and protects against public RPC rate limits.
-  const cached = ownershipCache.get(walletAddr.toLowerCase());
+  // The chain is part of the cache key: the same wallet owns different NFTs
+  // on different chains.
+  const cacheKey = `${chain}:${walletAddr.toLowerCase()}`;
+  const cached = ownershipCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.data;
   }
@@ -234,7 +256,7 @@ export async function getOwnedCardsOnChain(
 
   // Cache result for 30s — avoids RPC hits for repeat battles
   // and protects against public mainnet.base.org rate limits.
-  ownershipCache.set(walletAddr.toLowerCase(), {
+  ownershipCache.set(cacheKey, {
     data: result,
     expiresAt: Date.now() + CACHE_TTL_MS,
   });
@@ -249,14 +271,17 @@ export async function getOwnedCardsOnChain(
 export async function getBalanceOnChain(
   wallet: Address | string,
   cardId: string,
-  level: number
+  level: number,
+  chain: SupportedChain = 'base'
 ): Promise<number> {
   const cardTypeId = CARD_TYPE_IDS[cardId];
   if (cardTypeId === undefined) {
     throw new Error(`Unknown cardId: ${cardId}`);
   }
+  const config = getChainConfig(chain);
+  const publicClient = getClient(chain);
   const balance = (await publicClient.readContract({
-    address: CLASH_CARDS_ADDRESS,
+    address: config.clashCardsAddress,
     abi: CLASH_CARDS_ABI,
     functionName: "balanceOf",
     args: [tokenIdOf(cardTypeId, level), getAddress(wallet)],
