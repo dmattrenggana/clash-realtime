@@ -548,18 +548,57 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (this.triggerBot) {
       this.activateBotFallback();
     } else if (this.state.players.size === 2) {
-      this.state.status = "playing";
-      this.gameStartTime = Date.now();
-      // Both players are in — cancel the empty-room watchdog.
-      if (this.emptyTimeout !== null) {
-        this.emptyTimeout.clear();
-        this.emptyTimeout = null;
-        console.log(`[BattleRoom] Empty-room guard disarmed (game started)`);
-      }
-      // Use this.clock so the interval auto-cleans on dispose
-      this.tickInterval = this.clock.setInterval(() => this.tick(), TICK_RATE_MS);
-      console.log(`[BattleRoom] Game started!`);
+      this.startMatchClock();
     }
+  }
+
+  /**
+   * Starts the simulation clock and marks the match as playing.
+   *
+   * IDEMPOTENT BY DESIGN — calling it twice must never start a second tick
+   * loop.
+   *
+   * 2026-11-04 BUGFIX (real PvP matches ran at double speed): onJoin() is
+   * async. The player is added to state.players SYNCHRONOUSLY (so the team
+   * assignment is race-free), but the on-chain deck validation below is
+   * awaited. When two players join the same room, BOTH onJoin() calls
+   * resume after their await and both observe state.players.size === 2, so
+   * both fell through to the "start the match" branch. Each call started its
+   * own clock.setInterval(() => this.tick(), 50ms), and the second
+   * assignment to this.tickInterval overwrote the first handle — so the
+   * first interval was never cleared and kept running alongside the second.
+   *
+   * Two tick loops meant the simulation advanced twice per real 50ms while
+   * state.elapsedMs (a wall-clock timestamp) advanced only once: units moved
+   * at double speed, elixir regenerated double, projectiles flew double.
+   * AI-bot matches were unaffected because activateBotFallback() already
+   * guarded its interval with `if (this.tickInterval === null)` — the PvP
+   * branch had no such guard.
+   *
+   * Production evidence (game-server log): every PvP match logged
+   * "Game started!" twice, every bot match logged it once.
+   *
+   * The guard below makes the start idempotent: the first caller wins, later
+   * ones are no-ops. This method is the single entry point for starting the
+   * clock (both the PvP branch and the bot fallback go through it) so the
+   * two paths cannot drift apart again.
+   */
+  private startMatchClock(): void {
+    if (this.tickInterval !== null) {
+      console.log(`[BattleRoom] Match already started; ignoring duplicate start.`);
+      return;
+    }
+    this.state.status = "playing";
+    this.gameStartTime = Date.now();
+    // Both players are in — cancel the empty-room watchdog.
+    if (this.emptyTimeout !== null) {
+      this.emptyTimeout.clear();
+      this.emptyTimeout = null;
+      console.log(`[BattleRoom] Empty-room guard disarmed (game started)`);
+    }
+    // Use this.clock so the interval auto-cleans on dispose
+    this.tickInterval = this.clock.setInterval(() => this.tick(), TICK_RATE_MS);
+    console.log(`[BattleRoom] Game started!`);
   }
 
   async onDrop(client: Client, code: number) {
@@ -941,20 +980,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // treat size >= 1 (us) + 1 (bot) = 2 as the truth.
     const expectedPlayerCount = 2; // 1 real + 1 bot
     if (playerCountAfter >= expectedPlayerCount) {
-      this.state.status = "playing";
-      this.gameStartTime = Date.now();
-
-      // Disarm the empty-room watchdog
-      if (this.emptyTimeout !== null) {
-        this.emptyTimeout.clear();
-        this.emptyTimeout = null;
-        console.log(`[BattleRoom] Empty-room guard disarmed (game started with Bot)`);
-      }
-
-      // Start tick loop if not running
-      if (this.tickInterval === null) {
-        this.tickInterval = this.clock.setInterval(() => this.tick(), TICK_RATE_MS);
-      }
+      // Single idempotent entry point for starting the clock — the bot path
+      // and the PvP path share it so they cannot drift apart again (see
+      // startMatchClock() for the double-tick-loop bug this prevents).
+      this.startMatchClock();
       console.log(`[BattleRoom] Game started against AI Bot! status now: ${this.state.status}`);
     } else {
       console.error(`[BattleRoom] Bot activated but player count is ${playerCountAfter}, expected ${expectedPlayerCount}. Status NOT changed. This is a bug.`);
