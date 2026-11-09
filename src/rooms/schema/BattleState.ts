@@ -54,6 +54,17 @@ export const CARD_ATTACK_SPEED: Record<string, number> = {
   // still the longest-attack-cd archer, so the 4.00s clip gets 62% of
   // its runtime before the next draw begins instead of 75%.
   robinhood: 2.5,
+  // 2026-11-09: Clanker — Epic melee bruiser (robot with a punch combo).
+  // The Punch_Combo_1 clip in clanker.glb runs 2.20s, so the cooldown is
+  // kept below that (1.8s = 82% of the clip) so the punch reads before the
+  // next one starts. Same reasoning as the Robinhood fix above: the
+  // cooldown is a BALANCE value, but it must not exceed the clip length.
+  clanker: 1.8,
+  // 2026-11-09: Warlord Jesse — Epic melee swordsman. The
+  // Triple_Combo_Attack clip in warlord_jesse.glb runs 4.33s; at a 3.0s
+  // cooldown the combo gets 69% of its runtime before the next swing,
+  // which is the same ratio Robinhood settled on.
+  warlord_jesse: 3.0,
 };
 
 // Attack damage per hit. Mirrors client CARDS[cardId].damage.
@@ -66,6 +77,15 @@ export const CARD_ATTACK_DAMAGE: Record<string, number> = {
   // Robinhood lands on 12.0 dps rather than 8.3. Cost, HP, range and
   // splash are unchanged.
   robinhood: 30,
+  // 2026-11-09: Clanker — Epic melee bruiser. 45 damage at a 1.8s
+  // cooldown lands on 25.0 dps, which is the highest melee dps in the
+  // roster (Barbarian sits at 19.2). That is the Epic trade-off: it has
+  // to close the distance to land at all.
+  clanker: 45,
+  // 2026-11-09: Warlord Jesse — Epic melee swordsman. 60 damage at a
+  // 3.0s cooldown lands on 20.0 dps, but in 60-damage chunks that
+  // delete a Giant in 7 hits rather than the Barbarian's 16.
+  warlord_jesse: 60,
 };
 
 // Attack Range in units. Mirrors client CARDS[cardId].range.
@@ -74,6 +94,11 @@ export const CARD_RANGE: Record<string, number> = {
   goblin: 1.5, barbarian: 1.5, healer: 4.5, gunslinger: 5.5,
   barrel_bomb: 1.2, meteor: 1.5, incubus: 2.0,
   robinhood: 12.0,
+  // 2026-11-09: both new Epics are melee (no projectile), so their range
+  // is the standard melee reach. Clanker is a brawler at the Knight's
+  // 1.5; Warlord Jesse swings a sword and reaches slightly further.
+  clanker: 1.5,
+  warlord_jesse: 1.8,
 };
 
 // Projectile speed (units per second). If 0, the attack is melee/instant and spawns no projectile.
@@ -82,6 +107,10 @@ export const CARD_PROJECTILE_SPEED: Record<string, number> = {
   goblin: 0, barbarian: 0, healer: 6.0, gunslinger: 10.0,
   barrel_bomb: 0, meteor: 0, incubus: 8.0,
   robinhood: 8.0,
+  // 2026-11-09: both new Epics are melee, so they spawn no projectile
+  // (0 = instant hit, same as Knight / Barbarian / Giant).
+  clanker: 0,
+  warlord_jesse: 0,
 };
 
 // Attack Splash Radius (AoE). If > 0, hits all enemies within this radius.
@@ -96,6 +125,13 @@ export const CARD_ATTACK_SPLASH: Record<string, number> = {
   // 2026-10-20: 1.8 -> 2.5, matching Barbarian's AoE now that the
   // card moved up to Epic.
   robinhood: 2.5,
+  // 2026-11-09: Clanker — the Punch_Combo_1 animation is a wide ground
+  // slam, so it hits everything in front of it (2.0 radius, between the
+  // Wizard's 2.0 and Barbarian's 2.5).
+  clanker: 2.0,
+  // 2026-11-09: Warlord Jesse — single-target swordsman, no AoE. His
+  // damage comes from the 60-damage chunks, not from hitting wide.
+  warlord_jesse: 0,
 };
 
 // Hit-points per card. Mirrors client CARDS[cardId].hp, except
@@ -110,6 +146,12 @@ export const CARD_HP: Record<string, number> = {
   barrel_bomb: 1, meteor: 1, incubus: 60,
   // 2026-10-20: 120 -> 150 with the Epic stat line.
   robinhood: 150,
+  // 2026-11-09: Clanker — the tankiest melee unit in the roster after the
+  // Giant (400). At 280 it survives roughly two Giant hits.
+  clanker: 280,
+  // 2026-11-09: Warlord Jesse — glass cannon. 220 HP is Barbarian-tier,
+  // but he trades 60-damage hits for it.
+  warlord_jesse: 220,
 };
 
 export const CARD_COST: Record<string, number> = {
@@ -118,6 +160,13 @@ export const CARD_COST: Record<string, number> = {
   barrel_bomb: 2, meteor: 3, incubus: 2,
   // 2026-10-20: 2 -> 3 elixir with the Epic stat line.
   robinhood: 3,
+  // 2026-11-09: Clanker — 4 elixir. The Epic price for a 25 dps melee
+  // bruiser that also has 280 HP and 2.0 splash.
+  clanker: 4,
+  // 2026-11-09: Warlord Jesse — 5 elixir, the joint-highest cost in the
+  // roster (with the Giant). He is a 20 dps melee unit that needs the
+  // space to reach the back line.
+  warlord_jesse: 5,
 };
 
 // BUGFIX (2026-06-17): movement speed per-card (units per second).
@@ -133,6 +182,11 @@ export const CARD_MOVE_SPEED: Record<string, number> = {
   goblin: 3.5, barbarian: 2.5, healer: 2.0, gunslinger: 3.0,
   barrel_bomb: 0, meteor: 0, incubus: 3.5,
   robinhood: 3.0,
+  // 2026-11-09: Clanker — heavy robot, walks at Barbarian speed.
+  clanker: 2.5,
+  // 2026-11-09: Warlord Jesse — the fastest melee unit in the roster,
+  // he closes the gap quickly and needs to.
+  warlord_jesse: 3.0,
 };
 
 export const CARD_SPAWN_COUNT: Record<string, number> = {
@@ -140,6 +194,9 @@ export const CARD_SPAWN_COUNT: Record<string, number> = {
   goblin: 3, barbarian: 1, healer: 1, gunslinger: 1,
   barrel_bomb: 1, meteor: 1, incubus: 3,
   robinhood: 1,
+  // 2026-11-09: both new Epics deploy as a single unit.
+  clanker: 1,
+  warlord_jesse: 1,
 };
 
 /** Set of units that fly. Flying units ignore ground unit collisions. */

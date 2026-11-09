@@ -65,7 +65,7 @@ function getClient(chain: SupportedChain) {
   return client;
 }
 
-/** Map cardId → cardTypeId (0..12). */
+/** Map cardId → cardTypeId (0..14). */
 export const CARD_TYPE_IDS: Record<string, number> = {
   knight: 0,
   archer: 1,
@@ -80,6 +80,12 @@ export const CARD_TYPE_IDS: Record<string, number> = {
   meteor: 10,
   incubus: 11,
   robinhood: 12,
+  // 2026-11-09: the two new Epic cards. The card types were registered
+  // on-chain via ClashCardManager.addCardType() (13 = clanker,
+  // 14 = warlord_jesse) — the manager allows up to MAX_CARD_TYPES = 256,
+  // so no contract redeploy was needed.
+  clanker: 13,
+  warlord_jesse: 14,
 };
 
 /** Reverse: cardTypeId → cardId. */
