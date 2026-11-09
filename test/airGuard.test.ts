@@ -129,19 +129,18 @@ describe("splash data is internally consistent", () => {
         assert.ok(!CAN_ATTACK_AIR.has("barbarian"), "barbarian is ground-only");
     });
 
-    it("clanker cannot damage flying units inside its splash", () => {
-        // clanker (cardType 13, Epic melee bruiser, splash 2.0) is the second
-        // melee-AoE card. It is not in CAN_ATTACK_AIR, so the same guard that
-        // protects the barbarian has to protect it.
-        const clanker = { cardId: "clanker", x: 0, z: 0, hp: 280 };
-        const wyvern = { cardId: "wyvern", x: 1, z: 0, hp: 120 };
-        const knight = { cardId: "knight", x: 1.5, z: 0, hp: 100 };
-
-        const hit = applyMeleeAoE(clanker, [wyvern, knight], 45);
-
-        assert.equal(wyvern.hp, 120, "a wyvern inside clanker's splash must take no damage");
-        assert.equal(knight.hp, 55, "clanker still hits ground units in range");
-        assert.deepEqual(hit, ["knight"]);
+    it("clanker is a single-target tank, so the splash guard does not apply to it", () => {
+        // 2026-11-09: the Clanker's attack was changed to match the Giant's
+        // exactly (25 damage, 1.5s cooldown, NO splash). Its identity is now
+        // the deathrattle — an electric blast and two mini Clankers — instead
+        // of an on-hit AoE, so it is no longer a melee-AoE card and the
+        // structural invariant above is what protects the roster.
+        assert.equal(CARD_ATTACK_SPLASH.clanker ?? 0, 0, "the clanker has no on-hit splash");
+        assert.ok(
+            !meleeAoeCards().includes("clanker"),
+            "a card without a splash is not a melee-AoE card",
+        );
+        assert.ok(!CAN_ATTACK_AIR.has("clanker"), "clanker is ground-only");
     });
 
     it("every air-capable card is correctly classified", () => {

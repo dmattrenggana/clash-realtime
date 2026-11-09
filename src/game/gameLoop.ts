@@ -4,6 +4,7 @@ import { getTowerCoords, routeThroughBridge } from "./pathfinding.js";
 import { applySeparationForces, applyRiverConstraint, applyTowerCollisions } from "./physics.js";
 import { processHealerAI, processSpells } from "./behaviors.js";
 import { applyUnitDamage, updateProjectiles, processTowerAttacks } from "./combat.js";
+import { handleDeathEffects } from "./deathrattle.js";
 
 /**
  * The core simulation tick function of the server-authoritative game engine.
@@ -35,7 +36,7 @@ export function tickGame(
   });
 
   // 2. Move Units (with Collision Separation and Pathfinding Bridge Waypoints)
-  moveUnits(state, tickRateMs);
+  moveUnits(state, tickRateMs, onDamageDealt);
 
   // 3. Process Custom Troop Behaviors (like Healer AI)
   state.players.forEach((player) => {
@@ -73,7 +74,11 @@ export function tickGame(
  * Handles per-tick per-unit movement calculations,
  * bridge-crossing routing, and separation-force nudging.
  */
-function moveUnits(state: BattleState, tickRateMs: number): void {
+function moveUnits(
+  state: BattleState,
+  tickRateMs: number,
+  onDamageDealt?: (attackerTeam: number, damage: number) => void
+): void {
   const playerList = Array.from(state.players.values());
 
   // 1. Gather all alive troop units across both teams for collision checking
@@ -84,7 +89,12 @@ function moveUnits(state: BattleState, tickRateMs: number): void {
       if (unit.hp <= 0) {
         if (unit.deathTime === 0) {
           unit.deathTime = state.elapsedSec;
-        } else if (state.elapsedSec - unit.deathTime > 1.0) {
+        }
+        // 2026-11-09: the Clanker deathrattle (electric blast + two mini
+        // Clankers). The handler is idempotent, so it fires exactly once per
+        // death even though this loop runs every tick.
+        handleDeathEffects(state, player, unit, id, onDamageDealt);
+        if (state.elapsedSec - unit.deathTime > 1.0) {
           player.units.delete(id);
         }
       } else if (!SPELL_CARDS.has(unit.cardId)) {

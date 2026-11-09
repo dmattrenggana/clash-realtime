@@ -59,7 +59,9 @@ export const CARD_ATTACK_SPEED: Record<string, number> = {
   // kept below that (1.8s = 82% of the clip) so the punch reads before the
   // next one starts. Same reasoning as the Robinhood fix above: the
   // cooldown is a BALANCE value, but it must not exceed the clip length.
-  clanker: 1.8,
+  // 2026-11-09: Clanker — attack speed now matches the Giant (1.5s), so
+  // his swing reads as a heavy tank blow instead of a fast flurry.
+  clanker: 1.5,
   // 2026-11-09: Warlord Jesse — Epic melee swordsman. The
   // Triple_Combo_Attack clip in warlord_jesse.glb runs 4.33s; at a 3.0s
   // cooldown the combo gets 69% of its runtime before the next swing,
@@ -77,11 +79,11 @@ export const CARD_ATTACK_DAMAGE: Record<string, number> = {
   // Robinhood lands on 12.0 dps rather than 8.3. Cost, HP, range and
   // splash are unchanged.
   robinhood: 30,
-  // 2026-11-09: Clanker — Epic melee bruiser. 45 damage at a 1.8s
-  // cooldown lands on 25.0 dps, which is the highest melee dps in the
-  // roster (Barbarian sits at 19.2). That is the Epic trade-off: it has
-  // to close the distance to land at all.
-  clanker: 45,
+  // 2026-11-09: Clanker — Epic melee bruiser. The attack now matches the
+  // Giant exactly: 25 damage on a 1.5s cooldown (16.7 dps, the Giant's
+  // rate). The Clanker's identity is its deathrattle — an electric blast
+  // and two mini Clankers — not raw dps.
+  clanker: 25,
   // 2026-11-09: Warlord Jesse — Epic melee swordsman. 60 damage at a
   // 3.0s cooldown lands on 20.0 dps, but in 60-damage chunks that
   // delete a Giant in 7 hits rather than the Barbarian's 16.
@@ -128,7 +130,12 @@ export const CARD_ATTACK_SPLASH: Record<string, number> = {
   // 2026-11-09: Clanker — the Punch_Combo_1 animation is a wide ground
   // slam, so it hits everything in front of it (2.0 radius, between the
   // Wizard's 2.0 and Barbarian's 2.5).
-  clanker: 2.0,
+  //
+  // 2026-11-09 (later the same day): "same attack as the Giant" means the
+  // Giant's whole attack profile, and the Giant has no splash. The Clanker's
+  // identity is now its deathrattle (electric blast + two mini Clankers),
+  // not an on-hit AoE, so the melee splash is dropped to 0.
+  clanker: 0,
   // 2026-11-09: Warlord Jesse — single-target swordsman, no AoE. His
   // damage comes from the 60-damage chunks, not from hitting wide.
   warlord_jesse: 0,
@@ -146,9 +153,10 @@ export const CARD_HP: Record<string, number> = {
   barrel_bomb: 1, meteor: 1, incubus: 60,
   // 2026-10-20: 120 -> 150 with the Epic stat line.
   robinhood: 150,
-  // 2026-11-09: Clanker — the tankiest melee unit in the roster after the
-  // Giant (400). At 280 it survives roughly two Giant hits.
-  clanker: 280,
+  // 2026-11-09: Clanker — the tankiest unit in the roster. HP is 2x the
+  // Giant's (400), so it survives eight Giant hits. Its attack matches the
+  // Giant exactly: 25 damage on a 1.5s cooldown (16.7 dps) and no splash.
+  clanker: 800,
   // 2026-11-09: Warlord Jesse — glass cannon. 220 HP is Barbarian-tier,
   // but he trades 60-damage hits for it.
   warlord_jesse: 220,
@@ -182,11 +190,11 @@ export const CARD_MOVE_SPEED: Record<string, number> = {
   goblin: 3.5, barbarian: 2.5, healer: 2.0, gunslinger: 3.0,
   barrel_bomb: 0, meteor: 0, incubus: 3.5,
   robinhood: 3.0,
-  // 2026-11-09: Clanker — heavy robot, walks at Barbarian speed.
-  clanker: 2.5,
-  // 2026-11-09: Warlord Jesse — the fastest melee unit in the roster,
-  // he closes the gap quickly and needs to.
-  warlord_jesse: 3.0,
+  // 2026-11-09: Clanker — heavy robot, walks at the Giant's speed (1.5).
+  clanker: 1.5,
+  // 2026-11-09: Warlord Jesse — now walks at the Knight's speed (2.5)
+  // instead of 3.0, so the two melee bruisers share one approach pace.
+  warlord_jesse: 2.5,
 };
 
 export const CARD_SPAWN_COUNT: Record<string, number> = {
@@ -217,6 +225,66 @@ export const CAN_ATTACK_AIR: Set<string> = new Set(["archer", "wyvern", "wizard"
  *      client stops rendering it.
  */
 export const SPELL_CARDS: Set<string> = new Set(["meteor", "barrel_bomb"]);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Clanker deathrattle (2026-11-09)
+// ─────────────────────────────────────────────────────────────────────────────
+// When a Clanker dies it discharges an electric blast and leaves behind two
+// half-size mini Clankers. A mini Clanker is a transient combat unit, NOT an
+// NFT card type: it has no on-chain identity, so it is kept out of
+// CARD_TYPE_IDS and out of every deck / NFT table. It is identified only by
+// the `variant` field on DeployedUnit.
+//
+// The mini's stats are a quarter of the parent's base card values and its
+// death blast is half of ITS OWN attack, so the mini Clanker is a scaled-down
+// copy of the whole deathrattle loop rather than a one-off.
+export const CLANKER_VARIANT_MINI = "mini";
+
+/** Visual scale of a mini Clanker relative to a full Clanker. */
+export const MINI_CLANKER_SCALE = 0.35;
+
+/** How many mini Clankers a dying Clanker leaves behind. */
+export const MINI_CLANKER_COUNT = 2;
+
+/** Radius of the electric blast (units). Same for the Clanker and its minis. */
+export const CLANKER_BLAST_RADIUS = 2.5;
+
+/** The blast deals half of the dying unit's attack damage. */
+export const CLANKER_BLAST_DAMAGE_DIVISOR = 2;
+
+/** A mini Clanker's HP and damage are a quarter of the parent's base values. */
+export const MINI_CLANKER_STAT_DIVISOR = 4;
+
+/** True when the unit is one of the mini Clankers a dying Clanker spawned. */
+export function isMiniClanker(unit: { variant?: string }): boolean {
+  return unit.variant === CLANKER_VARIANT_MINI;
+}
+
+/**
+ * The base attack damage of a unit, before NFT-level scaling, taking the
+ * mini variant into account. A mini Clanker deals a quarter of the Clanker's
+ * base damage (25 / 4 = 6).
+ */
+export function baseAttackDamage(cardId: string, variant: string): number {
+  const base = CARD_ATTACK_DAMAGE[cardId] || 0;
+  if (variant === CLANKER_VARIANT_MINI) {
+    return Math.max(1, Math.round(base / MINI_CLANKER_STAT_DIVISOR));
+  }
+  return base;
+}
+
+/**
+ * The base HP of a unit, before NFT-level scaling, taking the mini variant
+ * into account. A mini Clanker has a quarter of the Clanker's base HP
+ * (800 / 4 = 200).
+ */
+export function baseUnitHp(cardId: string, variant: string): number {
+  const base = CARD_HP[cardId] || 100;
+  if (variant === CLANKER_VARIANT_MINI) {
+    return Math.max(1, Math.round(base / MINI_CLANKER_STAT_DIVISOR));
+  }
+  return base;
+}
 
 /** AoE explosion radius (units). */
 export const SPELL_SPLASH_RADIUS: Record<string, number> = {
@@ -275,6 +343,17 @@ export class DeployedUnit extends Schema {
   @type("float32") lastAttackTime: number = 0; // Timestamp (in seconds from game start) of last attack
   @type("string") targetId: string = ""; // ID of the current target (for animation facing)
   @type("float32") deathTime: number = 0; // Tracks when HP hit 0 to delay cleanup for animations
+
+  // 2026-11-09 — Clanker deathrattle.
+  // variant is "" for every normally-deployed card and "mini" for the two
+  // half-size Clankers a dying Clanker leaves behind. It is NOT an NFT card
+  // type: a mini Clanker is a transient combat unit with no on-chain
+  // identity, so it must never reach CARD_TYPE_IDS or the deck tables.
+  @type("string") variant: string = "";
+
+  // Set the first time the death effects for this unit are processed, so the
+  // electric blast and the mini spawn can never fire twice for one death.
+  @type("boolean") deathTriggered: boolean = false;
 }
 
 export class Projectile extends Schema {

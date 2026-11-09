@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { DeployedUnit, Player, Projectile, Tower, SPELL_CARDS, FLYING_UNITS, CAN_ATTACK_AIR } from "../rooms/schema/BattleState.js";
-import { CARD_ATTACK_SPEED, CARD_RANGE, CARD_PROJECTILE_SPEED, CARD_ATTACK_DAMAGE, CARD_ATTACK_SPLASH } from "../rooms/schema/BattleState.js";
+import { CARD_ATTACK_SPEED, CARD_RANGE, CARD_PROJECTILE_SPEED, CARD_ATTACK_DAMAGE, CARD_ATTACK_SPLASH, baseAttackDamage } from "../rooms/schema/BattleState.js";
 import { getTowerCoords } from "./pathfinding.js";
 import { scaleStatByLevel } from "../services/clashCards.js";
 
@@ -122,7 +122,9 @@ export function applyUnitDamage(
         // 2026-06-24: NFT-level damage scaling. unit.cardLevel is set at deploy
         // time from player.deckLevels. L1 = 1.0x (base), L9 = 1.80x.
         // Imports scaleStatByLevel from the ClashCards service.
-        const baseDamage = CARD_ATTACK_DAMAGE[unit.cardId] || 0;
+        // 2026-11-09: baseAttackDamage also folds in the mini-Clanker
+        // variant (a quarter of the Clanker's base damage).
+        const baseDamage = baseAttackDamage(unit.cardId, unit.variant);
         const damage = scaleStatByLevel(baseDamage, unit.cardLevel || 1);
         const splash = CARD_ATTACK_SPLASH[unit.cardId] || 0;
 
