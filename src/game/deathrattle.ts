@@ -8,10 +8,10 @@
  *     damage to every ENEMY unit in range (not to towers and not to
  *     allies — the blast clears a path for the minions, it does not punish
  *     the owner or chip the enemy tower).
- *   - two mini Clankers: 35% of the visual size, HP and damage at a quarter
- *     of the parent's base values. Each mini repeats the loop: when it dies
- *     it deals an electric blast of HALF OF ITS OWN attack (so 3 damage) and
- *     does NOT spawn further minions.
+ *   - two mini Clankers: 61.25% of the visual size (35% x 1.75), a quarter
+ *     of the parent's HP (200) and an attack of 10. Each mini repeats the
+ *     loop: when it dies it deals an electric blast of HALF OF ITS OWN
+ *     attack (so 5 damage) and does NOT spawn further minions.
  *
  * A mini Clanker is a transient combat unit, not an NFT card type. It is
  * identified by the `variant` field on DeployedUnit and is deliberately kept
@@ -65,7 +65,7 @@ export function handleDeathEffects(
 
   // ── Electric blast ────────────────────────────────────────────────────────
   // Half of the dying unit's OWN attack damage: 13 for a full Clanker
-  // (25 / 2) and 3 for a mini Clanker (6 / 2).
+  // (25 / 2) and 5 for a mini Clanker (10 / 2).
   const attack = scaleStatByLevel(
     baseAttackDamage(unit.cardId, unit.variant),
     unit.cardLevel || 1

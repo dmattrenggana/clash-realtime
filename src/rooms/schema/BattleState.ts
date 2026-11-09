@@ -190,8 +190,10 @@ export const CARD_MOVE_SPEED: Record<string, number> = {
   goblin: 3.5, barbarian: 2.5, healer: 2.0, gunslinger: 3.0,
   barrel_bomb: 0, meteor: 0, incubus: 3.5,
   robinhood: 3.0,
-  // 2026-11-09: Clanker — heavy robot, walks at the Giant's speed (1.5).
-  clanker: 1.5,
+  // 2026-11-09: Clanker — heavy robot. It now walks at 1.25, which is
+  // slower than the Giant's 1.5: the Clanker is the slowest unit in the
+  // roster and has to commit to a push.
+  clanker: 1.25,
   // 2026-11-09: Warlord Jesse — now walks at the Knight's speed (2.5)
   // instead of 3.0, so the two melee bruisers share one approach pace.
   warlord_jesse: 2.5,
@@ -240,8 +242,11 @@ export const SPELL_CARDS: Set<string> = new Set(["meteor", "barrel_bomb"]);
 // copy of the whole deathrattle loop rather than a one-off.
 export const CLANKER_VARIANT_MINI = "mini";
 
-/** Visual scale of a mini Clanker relative to a full Clanker. */
-export const MINI_CLANKER_SCALE = 0.35;
+/**
+ * Visual scale of a mini Clanker relative to a full Clanker.
+ * 2026-11-09: was 0.35, the user asked for 75% bigger -> 0.35 x 1.75.
+ */
+export const MINI_CLANKER_SCALE = 0.6125;
 
 /** How many mini Clankers a dying Clanker leaves behind. */
 export const MINI_CLANKER_COUNT = 2;
@@ -252,8 +257,17 @@ export const CLANKER_BLAST_RADIUS = 2.5;
 /** The blast deals half of the dying unit's attack damage. */
 export const CLANKER_BLAST_DAMAGE_DIVISOR = 2;
 
-/** A mini Clanker's HP and damage are a quarter of the parent's base values. */
+/** A mini Clanker's HP is a quarter of the parent's base value. */
 export const MINI_CLANKER_STAT_DIVISOR = 4;
+
+/**
+ * A mini Clanker's attack damage.
+ *
+ * 2026-11-09: the mini used to take a quarter of the parent's damage
+ * (25 / 4 = 6). The user asked for 10 instead, so the mini's attack is
+ * now an explicit value and no longer tied to the divisor.
+ */
+export const MINI_CLANKER_ATTACK_DAMAGE = 10;
 
 /** True when the unit is one of the mini Clankers a dying Clanker spawned. */
 export function isMiniClanker(unit: { variant?: string }): boolean {
@@ -262,15 +276,14 @@ export function isMiniClanker(unit: { variant?: string }): boolean {
 
 /**
  * The base attack damage of a unit, before NFT-level scaling, taking the
- * mini variant into account. A mini Clanker deals a quarter of the Clanker's
- * base damage (25 / 4 = 6).
+ * mini variant into account. A mini Clanker deals
+ * MINI_CLANKER_ATTACK_DAMAGE (10) per hit.
  */
 export function baseAttackDamage(cardId: string, variant: string): number {
-  const base = CARD_ATTACK_DAMAGE[cardId] || 0;
   if (variant === CLANKER_VARIANT_MINI) {
-    return Math.max(1, Math.round(base / MINI_CLANKER_STAT_DIVISOR));
+    return MINI_CLANKER_ATTACK_DAMAGE;
   }
-  return base;
+  return CARD_ATTACK_DAMAGE[cardId] || 0;
 }
 
 /**

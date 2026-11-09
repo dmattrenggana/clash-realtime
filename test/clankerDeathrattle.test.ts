@@ -126,8 +126,8 @@ describe("clanker deathrattle", () => {
 
     (room as any).tick();
 
-    // The mini deals 25 / 4 = 6 damage, so its blast is 3.
-    assert.equal(victim.hp, 150 - 3, "a mini clanker blasts for half of its own (quarter) attack");
+    // The mini deals 10 damage, so its blast is 5.
+    assert.equal(victim.hp, 150 - 5, "a mini clanker blasts for half of its own (10) attack");
 
     const minis = Array.from(owner.units.values()).filter((u) => u.variant === "mini");
     assert.equal(minis.length, 1, "a mini clanker must not spawn further mini clankers");
@@ -155,7 +155,7 @@ describe("clanker deathrattle", () => {
     assert.equal(CARD_ATTACK_DAMAGE.clanker, CARD_ATTACK_DAMAGE.giant, "same attack damage as the giant");
     assert.equal(CARD_ATTACK_SPEED.clanker, CARD_ATTACK_SPEED.giant, "same attack speed as the giant");
     assert.equal(CARD_ATTACK_SPLASH.clanker, CARD_ATTACK_SPLASH.giant, "same splash as the giant");
-    assert.equal(CARD_MOVE_SPEED.clanker, CARD_MOVE_SPEED.giant, "same movement speed as the giant");
+    assert.equal(CARD_MOVE_SPEED.clanker, 1.25, "the clanker walks at 1.25, slower than the giant's 1.5");
     assert.equal(CARD_MOVE_SPEED.warlord_jesse, CARD_MOVE_SPEED.knight, "warlord jesse walks at the knight's speed");
   });
 });
