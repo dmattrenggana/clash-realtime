@@ -367,6 +367,16 @@ export class DeployedUnit extends Schema {
   // Set the first time the death effects for this unit are processed, so the
   // electric blast and the mini spawn can never fire twice for one death.
   @type("boolean") deathTriggered: boolean = false;
+
+  // 2026-11-09 — the stat-buff multiplier currently applied to this unit
+  // (1 = no buff). It is recomputed every tick from the buff zones that
+  // cover the unit's position.
+  @type("float32") statBuff: number = 1;
+
+  // 2026-11-09 — the Warlord Jesse's deploy animation. While the server
+  // clock is below this timestamp the unit holds still and plays its
+  // sword-shout, as if activating its buff. 0 = no deploy animation.
+  @type("float32") deployAnimUntilMs: number = 0;
 }
 
 export class Projectile extends Schema {
@@ -421,9 +431,37 @@ export class Player extends Schema {
   @type({ map: DeployedUnit }) units = new MapSchema<DeployedUnit>();
 }
 
+/**
+ * A stat-buff aura on the arena floor.
+ *
+ * 2026-11-09 — the Warlord Jesse's buff. While he is alive his aura is
+ * "active": +10% to every stat of every unit inside a 5-unit radius. When
+ * he dies the aura turns into a "death" burst: +30% for 4 seconds, centred
+ * on the spot where he fell.
+ *
+ * The zone lives in the state (not in a module-level array) because the
+ * client renders it — it needs the position, the radius and the phase.
+ */
+export class BuffZone extends Schema {
+  @type("string") uid: string = "";
+  @type("uint8") team: number = 0;
+  @type("float32") x: number = 0;
+  @type("float32") z: number = 0;
+  @type("float32") radius: number = 5;
+  /** 1.1 while the owner lives, 1.3 for the 4-second death burst. */
+  @type("float32") multiplier: number = 1.1;
+  /** "active" (the owner lives) or "death" (the 4-second burst). */
+  @type("string") phase: string = "active";
+  /** Server timestamp (elapsedMs) when the zone expires; -1 = no expiry. */
+  @type("float32") expiresAt: number = -1;
+}
+
 export class BattleState extends Schema {
   @type({ map: Player }) players = new MapSchema<Player>();
   @type({ map: Projectile }) projectiles = new MapSchema<Projectile>(); // Track active projectiles
+  // 2026-11-09 — the stat-buff auras (Warlord Jesse). The client renders
+  // them, so they travel in the state.
+  @type({ map: BuffZone }) buffZones = new MapSchema<BuffZone>();
   // elapsedSec is the integer-second count, kept for the HUD timer and the
   // MAX_DURATION (600s) win-condition check. UI displays and game logic that
   // want a sub-second resolution read elapsedMs instead.

@@ -40,12 +40,16 @@ export function processHealerAI(
       unit.targetId = healTargetUID; // Track the ally's UID so client draws beam
       
       const now = elapsedSec;
-      const attackSpeed = CARD_ATTACK_SPEED[unit.cardId] || 1.0;
+      // 2026-11-09: the stat buff speeds the heal up as well.
+      const attackSpeed = (CARD_ATTACK_SPEED[unit.cardId] || 1.0) / (unit.statBuff || 1);
       if (now - unit.lastAttackTime >= attackSpeed) {
         unit.lastAttackTime = now;
         // 2026-06-24: Heal amount scales with NFT level (L1..L9).
         const baseHeal = CARD_ATTACK_DAMAGE[unit.cardId] || 20;
-        const healAmount = scaleStatByLevel(baseHeal, unit.cardLevel || 1);
+        // 2026-11-09: the stat buff raises the heal amount too.
+        const healAmount = Math.round(
+          scaleStatByLevel(baseHeal, unit.cardLevel || 1) * (unit.statBuff || 1)
+        );
         const splash = CARD_ATTACK_SPLASH[unit.cardId] || 1.8;
         
         // AoE Heal around target

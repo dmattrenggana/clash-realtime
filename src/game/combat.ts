@@ -66,8 +66,10 @@ export function applyUnitDamage(
 
       if (unit.action !== "attack") return;
 
-      // Check cooldown
-      const attackSpeed = CARD_ATTACK_SPEED[unit.cardId] || 1.0;
+      // Check cooldown. 2026-11-09: the stat buff (the Warlord Jesse's
+      // aura) speeds the attack up, so the cooldown is divided by the
+      // multiplier instead of the multiplier being applied to the damage.
+      const attackSpeed = (CARD_ATTACK_SPEED[unit.cardId] || 1.0) / (unit.statBuff || 1);
       const now = elapsedSec;
       if (now - unit.lastAttackTime < attackSpeed) return;
 
@@ -125,7 +127,11 @@ export function applyUnitDamage(
         // 2026-11-09: baseAttackDamage also folds in the mini-Clanker
         // variant (a quarter of the Clanker's base damage).
         const baseDamage = baseAttackDamage(unit.cardId, unit.variant);
-        const damage = scaleStatByLevel(baseDamage, unit.cardLevel || 1);
+        // 2026-11-09: the stat buff (the Warlord Jesse's aura) raises the
+        // damage of every unit standing in the area.
+        const damage = Math.round(
+          scaleStatByLevel(baseDamage, unit.cardLevel || 1) * (unit.statBuff || 1)
+        );
         const splash = CARD_ATTACK_SPLASH[unit.cardId] || 0;
 
         if (projSpeed > 0) {

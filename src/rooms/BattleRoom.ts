@@ -18,6 +18,11 @@ import {
   SPELL_CARDS,
 } from "./schema/BattleState.js";
 import { scaleStatByLevel } from "../services/clashCards.js";
+import {
+  buffMultiplierAt,
+  isWarlordJesse,
+  WARLORD_JESSE_DEPLOY_ANIM_MS,
+} from "../game/buffs.js";
 import { parseSupportedChain, type SupportedChain } from "../chain/index.js";
 
 // 20 Hz server tick (was 10 Hz / 100ms).
@@ -1116,9 +1121,21 @@ for (let i = 0; i < spawnCount; i++) {
       unit.x = payload.x + offsetX;
       unit.z = payload.z;
 
-      unit.hp = scaledHp;
-      unit.maxHp = scaledHp;
+      // 2026-11-09: a unit deployed inside the Warlord Jesse's aura starts
+      // with the buff already applied (+10% HP).
+      const spawnBuff = buffMultiplierAt(this.state, unit.x, unit.z);
+      const buffedHp = Math.max(1, Math.round(scaledHp * spawnBuff));
+
+      unit.hp = buffedHp;
+      unit.maxHp = buffedHp;
+      unit.statBuff = spawnBuff;
       unit.spawnTime = this.state.elapsedSec;
+
+      // 2026-11-09: the Warlord Jesse holds still for a moment on deploy so
+      // it can play its sword-shout as it activates the buff.
+      if (isWarlordJesse(unit)) {
+        unit.deployAnimUntilMs = this.state.elapsedMs + WARLORD_JESSE_DEPLOY_ANIM_MS;
+      }
 
       const unitId = `${client.sessionId}-${this.clock.currentTime}-${i}`;
       player.units.set(unitId, unit);

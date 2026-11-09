@@ -5,6 +5,11 @@ import { applySeparationForces, applyRiverConstraint, applyTowerCollisions } fro
 import { processHealerAI, processSpells } from "./behaviors.js";
 import { applyUnitDamage, updateProjectiles, processTowerAttacks } from "./combat.js";
 import { handleDeathEffects } from "./deathrattle.js";
+import {
+  applyStatBuffs,
+  handleBuffDeathEffects,
+  updateBuffZones,
+} from "./buffs.js";
 
 /**
  * The core simulation tick function of the server-authoritative game engine.
@@ -27,6 +32,12 @@ export function tickGame(
   // BattleState.elapsedMs comment and src/game/snapshotBuffer.ts.
   state.elapsedMs = Date.now() - gameStartTime;
   state.elapsedSec = Math.floor(state.elapsedMs / 1000);
+
+  // 0. 2026-11-09: refresh the stat-buff auras (the Warlord Jesse) and
+  // apply the resulting multipliers to the units. This runs first so the
+  // movement, the combat and the healing all use the current buff.
+  updateBuffZones(state);
+  applyStatBuffs(state);
 
   // 1. Regen Elixir
   state.players.forEach((p: Player) => {
@@ -94,6 +105,9 @@ function moveUnits(
         // Clankers). The handler is idempotent, so it fires exactly once per
         // death even though this loop runs every tick.
         handleDeathEffects(state, player, unit, id, onDamageDealt);
+        // 2026-11-09: a dying Warlord Jesse turns his aura into the
+        // 4-second +30% death burst at the spot where he fell.
+        handleBuffDeathEffects(state, unit, id);
         if (state.elapsedSec - unit.deathTime > 1.0) {
           player.units.delete(id);
         }
@@ -179,6 +193,13 @@ function moveUnits(
         }
       } else {
         // --- Standard Unit Targeting (Knight, Archer, Giant, etc.) ---
+        // 2026-11-09: the deploy animation (the Warlord Jesse's sword-shout)
+        // holds the unit still for a moment before it starts moving.
+        if (unit.deployAnimUntilMs > 0 && state.elapsedMs < unit.deployAnimUntilMs) {
+          unit.action = "deploy";
+          unit.targetId = "";
+          return;
+        }
         // 1. Scan Unit Lawan (skip if building-only target)
         if (!targetsBuildingsOnly) {
           enemy.units.forEach((eUnit) => {
@@ -243,7 +264,9 @@ function moveUnits(
         const distToRoute = Math.sqrt(dx * dx + dz * dz);
         
         if (distToRoute > 0.001) {
-          const speed = CARD_MOVE_SPEED[unit.cardId] ?? 2.5;
+          // 2026-11-09: the stat buff (the Warlord Jesse's aura) raises the
+          // move speed of every unit standing in the area.
+          const speed = (CARD_MOVE_SPEED[unit.cardId] ?? 2.5) * (unit.statBuff || 1);
           const moveStep = (speed * tickRateMs) / 1000;
           const actualStep = Math.min(moveStep, distToRoute);
           
