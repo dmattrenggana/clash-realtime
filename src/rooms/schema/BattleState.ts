@@ -168,13 +168,11 @@ export const CARD_COST: Record<string, number> = {
   barrel_bomb: 2, meteor: 3, incubus: 2,
   // 2026-10-20: 2 -> 3 elixir with the Epic stat line.
   robinhood: 3,
-  // 2026-11-09: Clanker — 4 elixir. The Epic price for a 25 dps melee
-  // bruiser that also has 280 HP and 2.0 splash.
-  clanker: 4,
-  // 2026-11-09: Warlord Jesse — 5 elixir, the joint-highest cost in the
-  // roster (with the Giant). He is a 20 dps melee unit that needs the
-  // space to reach the back line.
-  warlord_jesse: 5,
+  // 2026-11-09: Clanker — 7 elixir, the most expensive card in the roster.
+  // He is an 800 HP tank, so he has to be expensive to play.
+  clanker: 7,
+  // 2026-11-09: Warlord Jesse — 4 elixir.
+  warlord_jesse: 4,
 };
 
 // BUGFIX (2026-06-17): movement speed per-card (units per second).
