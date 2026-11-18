@@ -31,8 +31,11 @@ export interface ChainConfig {
 
 const BASE_ADDRESSES = {
   clashCardsAddress: '0xF93643759c9C62E0e2E70969E2397806bE5CF609' as Address,
-  cardManagerAddress: '0x425894394a636A95dc5Ed947dF7eE63d93062682' as Address,
-  clashTokenAddress: '0xf3C66dc3afF9d04CbCEAfA8f9dE762a39EE0BBA3' as Address,
+  // 2026-11-18: the $CLASH token was replaced on Base, so the manager and the
+  // reward claim were redeployed against it. The ClashCards contract is
+  // unchanged — the existing NFTs and their metadata stay valid.
+  cardManagerAddress: '0x0100f053f6b3f2c8ca44b02394546462cce4c14d' as Address,
+  clashTokenAddress: '0x31D3100bF87DE707C20B15191e0EA37d12a2CcCc' as Address,
 };
 
 /**
